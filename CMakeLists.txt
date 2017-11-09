@@ -27,12 +27,15 @@ IF(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     "MinSizeRel" "RelWithDebInfo")
 ENDIF()
 
-SET(CMAKE_C_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Werror -O2 -mfpmath=sse -fPIC")
-SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Werror -O2 -mfpmath=sse -fPIC")
+# SET(CMAKE_C_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Werror -O2 -mfpmath=sse -fPIC")
+# SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Werror -O2 -mfpmath=sse -fPIC")
+
+SET(CMAKE_C_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Werror -O2 -fPIC")
+SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Werror -O2 -fPIC")
 
 ####
 # find threads
-find_package(Threads REQUIRED)
+# find_package(Threads REQUIRED)
 IF(CMAKE_USE_PTHREADS_INIT)
   SET(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -pthread")
   SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -pthread")
@@ -51,8 +54,8 @@ OPTION(CPUPBA_USE_AVX "USE_AVX" ON)
 
 if(CPUPBA_USE_AVX)
   ADD_DEFINITIONS(-DCPUPBA_USE_AVX)
-  SET(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -mavx")
-  SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -mavx")
+  # SET(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -mavx")
+  # SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -mavx")
 endif()
 
 ADD_SUBDIRECTORY(src/pba)

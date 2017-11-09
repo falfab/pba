@@ -9,7 +9,7 @@ IF(CUDA_FOUND)
   SET(SRCS pba.cpp
            ConfigBA.cpp
            CuTexImage.cpp
-           SparseBundleCPU.cpp
+          #  SparseBundleCPU.cpp
            SparseBundleCU.cpp)
 
   CUDA_ADD_LIBRARY(pba SHARED ${SRCS} ${PROGRAM_CU} ${CUDA_LIBRARY})

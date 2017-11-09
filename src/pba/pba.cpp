@@ -22,11 +22,14 @@
 #include <new>
 #include "pba.h"
 #include "SparseBundleCU.h"
-#include "SparseBundleCPU.h"
+// #include "SparseBundleCPU.h"
+#include <iostream>
 
 ParallelBA::ParallelBA(DeviceT device)
 {
     //The wrapper intends to provide different implementations.
+
+    std::cout << "*device = " << device << std::endl;
 
     if(device >= PBA_CUDA_DEVICE_DEFAULT)
 #ifndef PBA_NO_GPU
@@ -37,17 +40,25 @@ ParallelBA::ParallelBA(DeviceT device)
             _optimizer = cuba;
         }else
         {
+            std::cout << "*err1" << std::endl;
             device = PBA_CPU_FLOAT;
-            _optimizer = NewSparseBundleCPU(false);
+            // _optimizer = NewSparseBundleCPU(false);
             delete cuba;
         }
     }else
 #else
         device = PBA_CPU_FLOAT;
+        std::cout << "*err2" << std::endl;
 #endif
-    if(device == PBA_CPU_FLOAT)              _optimizer = NewSparseBundleCPU(false);
-    else if(device == PBA_CPU_DOUBLE)        _optimizer = NewSparseBundleCPU(true);
-    else                                     _optimizer = NULL;
+    // if(device == PBA_CPU_FLOAT)              _optimizer = NewSparseBundleCPU(false);
+    // else if(device == PBA_CPU_DOUBLE)        _optimizer = NewSparseBundleCPU(true);
+    // else                                     _optimizer = NULL;
+    if (device == PBA_CPU_FLOAT)
+        std::cout << "*err3" << std::endl;
+    else {
+        _optimizer = NULL;
+        std::cout << "*err4" << std::endl;
+    }
 }
 
 ParallelBA::~ParallelBA()

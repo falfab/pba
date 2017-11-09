@@ -999,6 +999,7 @@ void SparseBundleCU::EvaluateJacobians(bool shuffle)
 
     if(__jc_store_original || !__jc_store_transpose)
     {
+        std::cout << "SparseBundleCU::EvaluateJacobians1" << std::endl;
         ComputeJacobian(_cuCameraData, _cuPointData, _cuJacobianCamera,
             _cuJacobianPoint, _cuProjectionMap, _cuVectorSJ,
             _cuMeasurements, _cuCameraMeasurementList,
@@ -1007,6 +1008,7 @@ void SparseBundleCU::EvaluateJacobians(bool shuffle)
             ShuffleCameraJacobian(_cuJacobianCamera, _cuCameraMeasurementList, _cuJacobianCameraT);
     }else
     {
+        std::cout << "SparseBundleCU::EvaluateJacobians2" << std::endl;
         ComputeJacobian(_cuCameraData, _cuPointData, _cuJacobianCameraT,
             _cuJacobianPoint, _cuProjectionMap, _cuVectorSJ,
             _cuMeasurements, _cuCameraMeasurementListT,
