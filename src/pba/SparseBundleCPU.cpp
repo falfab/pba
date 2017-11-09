@@ -32,7 +32,6 @@ using std::pair;
 using std::ofstream;
 using std::max;
 
-
 #include <math.h>
 #include <time.h>
 #include <float.h>
@@ -1430,6 +1429,7 @@ namespace ProgramCPU
                          bool intrinsic_fixed , int radial_distortion, bool shuffle, Float* jct,
                          int mt, int i0)
     {
+        std::cout << "SparseBundleCPU::ComputeJacobian()" << std::endl;
         if(mt > 1 && (int)nproj >= mt)
         {
             MYTHREAD threads[THREAD_NUM_MAX];

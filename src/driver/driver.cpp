@@ -126,12 +126,15 @@ int main(int argc, char* argv[])
     if(strstr(driver_argument, "--float"))          device = ParallelBA::PBA_CPU_FLOAT;
     else if(strstr(driver_argument, "--double"))    device = ParallelBA::PBA_CPU_DOUBLE;
 
+
+    std::cout << "*creating ParallelBA " << device << std::endl;
     /////////////////////////////////////////////////////////////////////
     ParallelBA pba(device);          //You should reusing the same object for all new data
 
     /////////////////////////////////////////////////////////
     //Parameters can be changed before every call of RunBundleAdjustment
     //But do not change them from another thread when it is running BA.
+    std::cout << "*Paring paramenters..." << std::endl;
     pba.ParseParam(argc, argv);      //indirect parameter tuning from commandline
     //pba.SetFixedIntrinsics(true); //if your focal lengths are calibrated.
     //           equivalent to pba.GetInternalConfig()->__fixed_focallength = true;
@@ -145,8 +148,11 @@ int main(int argc, char* argv[])
     //2. pba.SetNextBundleMode(ParallelBA::BUNDLE_ONLY_MOTION) //chose a truncated mode?
 
     ////////////////////////////////////////////////////////////////
+    std::cout << "*SetCameraData..." << std::endl;
     pba.SetCameraData(camera_data.size(),  &camera_data[0]);                        //set camera parameters
+    std::cout << "*SetPointData..." << std::endl;
     pba.SetPointData(point_data.size(), &point_data[0]);                            //set 3D point data
+    std::cout << "*SetProjection..." << std::endl;
     pba.SetProjection(measurements.size(), &measurements[0], &ptidx[0], &camidx[0]);//set the projections
 
     vector<int> cmask;
@@ -162,8 +168,9 @@ int main(int argc, char* argv[])
 
     //////////////////////////////////////////////////////
     //pba.SetTimeBudget(10);      //use at most 10 seconds?
+    std::cout << "*RunBundleAdjustment..." << std::endl;
     pba.RunBundleAdjustment();    //run bundle adjustment, and camera_data/point_data will be modified
-
+    std::cout << "*RunBundleAdjustment... END" << std::endl;
 
     //Write the optimized system to file
     const char*  outpath = pba.GetInternalConfig()->GetOutputParam();

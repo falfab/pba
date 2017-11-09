@@ -100,6 +100,7 @@ namespace ProgramCU
                                 bool intrinsic_fixed, int radial_distortion,
                                 bool add_existing_diagc, int mode = 0);
 
+      
 };
 
 #endif

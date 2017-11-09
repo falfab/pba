@@ -317,6 +317,8 @@ void ConfigBA::SaveBundleRecord(int iter, float res, float damping, float gn, fl
 
 void ConfigBA::ParseParam(int argc, char** argv)
 {
+    // std::cout << "*ConfigBA::ParseParam" << std::endl;
+
     #define CHAR1_TO_INT(x)         ((x >= 'A' && x <= 'Z') ? x + 32 : x)
     #define CHAR2_TO_INT(str, i)    (str[i] ? CHAR1_TO_INT(str[i]) + (CHAR1_TO_INT(str[i+1]) << 8) : 0)
     #define CHAR3_TO_INT(str, i)    (str[i] ? CHAR1_TO_INT(str[i]) + (CHAR2_TO_INT(str, i + 1) << 8) : 0)
@@ -363,15 +365,18 @@ void ConfigBA::ParseParam(int argc, char** argv)
     #define MAKEINT3(a, b, c)       (MAKEINT1(a) + (MAKEINT2(b, c) << 8))
     #define MAKEINT4(a, b, c, d)    (MAKEINT1(a) + (MAKEINT3(b, c, d) << 8))
 
-    char* arg, *param, * opt;
+    char *arg, *param, *opt;
     int  opti, argi; float argf;
     for(int i = 0; i < argc; i++)
     {
         arg = argv[i];
+        // std::cout << "*arg: " << arg << std::endl;
         if(arg == NULL || arg[0] != '-' || !arg[1])continue;
         opt = arg+1;
+        // std::cout << "*opt: " << opt << std::endl;
         opti = STRING_TO_INT(opt);
         param = argv[i+1];
+        // std::cout << "*param: " << param << std::endl;
 
         ////////////////////////////////
         switch(opti)

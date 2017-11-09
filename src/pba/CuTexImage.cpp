@@ -30,6 +30,8 @@ using namespace std;
 #include <cuda_runtime_api.h>
 #include "CuTexImage.h"
 
+#include "ProgramCU.h"
+
 
 #if CUDA_VERSION <= 2010
 #error "Require CUDA 2.2 or higher"
@@ -131,10 +133,14 @@ void CuTexImage::CopyFromDevice(const void * buf)
 
 void CuTexImage::CopyToHost(void * buf)
 {
+    std::cout << "_cuData: " << _cuData << std::endl;
     if(_cuData == NULL) return;
     size_t sz = _imgWidth * _imgHeight * _numChannel * sizeof(float);
+    std::cout << "sz: " << sz << std::endl;
+    std::cout << "buf: " << &buf << std::endl;
     //cudaThreadSynchronize();
-    cudaMemcpy(buf, _cuData,sz , cudaMemcpyDeviceToHost);
+    cudaMemcpy(buf, _cuData, sz, cudaMemcpyDeviceToHost);
+    ProgramCU::CheckErrorCUDA("CopyToHost");
     cudaThreadSynchronize();
 }
 

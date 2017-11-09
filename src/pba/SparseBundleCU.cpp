@@ -131,36 +131,48 @@ void SparseBundleCU::BundleAdjustment()
 {
     if(ValidateInputData() != STATUS_SUCCESS) return;
 
+    std::cout << "*ValidateInputData() == STATUS_SUCCESS" << std::endl;
     //
 
     ////////////////////////
     TimerBA timer(this, TIMER_OVERALL);
 
     NormalizeData();
+    std::cout << "*NormalizeData()... DONE" << std::endl;
     if(InitializeBundle() != STATUS_SUCCESS)
     {
+        std::cout << "*failed to allocate gpu storage" << std::endl;
         //failed to allocate gpu storage
     }else if(__profile_pba)
     {
+        std::cout << "*profiling some stuff" << std::endl;
         //profiling some stuff
         RunProfileSteps();
     }else
     {
+        std::cout << "*real optimization STARTED" << std::endl;
         //real optimization
         AdjustBundleAdjsutmentMode();
+        std::cout << "*AdjustBundleAdjsutmentMode DONE" << std::endl;
         NonlinearOptimizeLM();
+        std::cout << "*NonlinearOptimizeLM DONE" << std::endl;
         TransferDataToHost();
+        std::cout << "*TransferDataToHost DONE" << std::endl;
     }
     DenormalizeData();
 }
 
 int  SparseBundleCU::RunBundleAdjustment()
 {
+    std::cout << "*is warm up device? " << __warmup_device << std::endl;
     if(__warmup_device) WarmupDevice();
+    std::cout << "*Calling  ResetBundleStatistics()" << std::endl;
     ResetBundleStatistics();
+    std::cout << "*Calling  BundleAdjustment()" << std::endl;
     BundleAdjustment();
     if(__num_lm_success > 0) SaveBundleStatistics(_num_camera,  _num_point, _num_imgpt);
     if(__num_lm_success > 0) PrintBundleStatistics();
+    std::cout << "*Calling  ResetTemporarySetting()" << std::endl;
     ResetTemporarySetting();
     return __num_lm_success;
 }
@@ -873,10 +885,15 @@ void SparseBundleCU::TransferDataToHost()
 
 float SparseBundleCU::EvaluateProjection(CuTexImage& cam, CuTexImage&point, CuTexImage& proj)
 {
+    ProgramCU::CheckErrorCUDA("EvaluateProjection1");
     ++__num_projection_eval;
     ConfigBA::TimerBA timer (this, TIMER_FUNCTION_PJ, true);
     ComputeProjection(cam, point, _cuMeasurements, _cuProjectionMap, proj, __use_radial_distortion);
-    if(_num_imgpt_q > 0) ComputeProjectionQ(cam, _cuCameraQMap, _cuCameraQMapW, proj, _num_imgpt);
+    ProgramCU::CheckErrorCUDA("EvaluateProjection2");
+    if(_num_imgpt_q > 0) {
+        ComputeProjectionQ(cam, _cuCameraQMap, _cuCameraQMapW, proj, _num_imgpt);
+        ProgramCU::CheckErrorCUDA("EvaluateProjection3");
+    }
     return (float) ComputeVectorNorm(proj, _cuBufferData);
 }
 
@@ -975,14 +992,21 @@ void SparseBundleCU::PrepareJacobianNormalization()
 {
     if(!_cuVectorSJ.IsValid())return;
 
+    std::cout << "*!_cuVectorSJ.isValid() == false" << std::endl;
+
     if((__jc_store_transpose || __jc_store_original) && _cuJacobianPoint.IsValid() && !__bundle_current_mode)
     {
-        CuTexImage null;        null.SwapData(_cuVectorSJ);
-        EvaluateJacobians();    null.SwapData(_cuVectorSJ);
+        std::cout << "*IF" << std::endl;
+        CuTexImage null;        
+        null.SwapData(_cuVectorSJ);
+        EvaluateJacobians();    
+        std::cout << "*EvaluateJacobians() DONE" << std::endl;
+        null.SwapData(_cuVectorSJ);
         ComputeDiagonal(_cuVectorJJ, _cuVectorSJ);
         ComputeSQRT(_cuVectorSJ);
     }else
     {
+        std::cout << "*ELSE" << std::endl;
         CuTexImage null;        null.SwapData(_cuVectorSJ);
         EvaluateJacobians();    ComputeBlockPC(0, true);
         null.SwapData(_cuVectorSJ);
@@ -1004,6 +1028,7 @@ void SparseBundleCU::EvaluateJacobians(bool shuffle)
             _cuJacobianPoint, _cuProjectionMap, _cuVectorSJ,
             _cuMeasurements, _cuCameraMeasurementList,
             __fixed_intrinsics, __use_radial_distortion, false);
+        std::cout << "SparseBundleCU::ComputeJacobian() DONE" << std::endl;
         if(shuffle && __jc_store_transpose && _cuJacobianCameraT.IsValid())
             ShuffleCameraJacobian(_cuJacobianCamera, _cuCameraMeasurementList, _cuJacobianCameraT);
     }else
@@ -1499,7 +1524,6 @@ void SparseBundleCU::AdjustBundleAdjsutmentMode()
         _cuJacobianCameraT.InitTexture(0, 0);
     }
 
-
 }
 
 float SparseBundleCU::EvaluateDeltaNorm()
@@ -1530,12 +1554,18 @@ void SparseBundleCU::NonlinearOptimizeLM()
     const int edwidth = __verbose_sse ? 12 : 8;
     _projection_sse = EvaluateProjection(_cuCameraData, _cuPointData, _cuImageProj);
     __initial_mse = __final_mse = _projection_sse * mse_convert_ratio;
+    
+    ProgramCU::CheckErrorCUDA("NonlinearOptimizeLM");
 
     //compute jacobian diagonals for normalization
-    if(__jacobian_normalize) PrepareJacobianNormalization();
+    if(__jacobian_normalize) {
+        PrepareJacobianNormalization();
+        std::cout << "*PrepareJacobianNormalization DONE" << std::endl;
+    }
 
     //evalaute jacobian
     EvaluateJacobians();
+    std::cout << "*EvaluateJacobians DONE" << std::endl;
     ComputeJtE(_cuImageProj, _cuVectorJtE);
     ///////////////////////////////////////////////////////////////
     if(__verbose_level)

@@ -29,36 +29,43 @@ ParallelBA::ParallelBA(DeviceT device)
 {
     //The wrapper intends to provide different implementations.
 
-    std::cout << "*device = " << device << std::endl;
+    // std::cout << "*device = " << device << std::endl;
 
     if(device >= PBA_CUDA_DEVICE_DEFAULT)
 #ifndef PBA_NO_GPU
     {
+        // std::cout << "*creating SparseBundleCU Object" << std::endl;
         SparseBundleCU * cuba = new SparseBundleCU(device - PBA_CUDA_DEVICE0);
         if(cuba->GetMemCapacity() > 0)
         {
+            // std::cout << "*Cuda has enough memory: "<< cuba->GetMemCapacity() << std::endl;
             _optimizer = cuba;
         }else
         {
-            std::cout << "*err1" << std::endl;
+            // std::cout << "*err1" << std::endl;
             device = PBA_CPU_FLOAT;
             // _optimizer = NewSparseBundleCPU(false);
             delete cuba;
         }
-    }else
+    }
+    // }else
 #else
         device = PBA_CPU_FLOAT;
-        std::cout << "*err2" << std::endl;
+        // std::cout << "*err2" << std::endl;
 #endif
+    else {
+        _optimizer = NULL;
+    }
     // if(device == PBA_CPU_FLOAT)              _optimizer = NewSparseBundleCPU(false);
     // else if(device == PBA_CPU_DOUBLE)        _optimizer = NewSparseBundleCPU(true);
     // else                                     _optimizer = NULL;
-    if (device == PBA_CPU_FLOAT)
-        std::cout << "*err3" << std::endl;
-    else {
-        _optimizer = NULL;
-        std::cout << "*err4" << std::endl;
-    }
+    // if (device == PBA_CPU_FLOAT)
+    //     // std::cout << "*err3" << std::endl;
+    // else {
+    //     _optimizer = NULL;
+    //     // std::cout << "*err4" << std::endl;
+    // }
+    // std::cout << "qua" << std::endl;
 }
 
 ParallelBA::~ParallelBA()

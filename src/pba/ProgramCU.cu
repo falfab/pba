@@ -24,6 +24,10 @@
 #include "CuTexImage.h"
 #include "ProgramCU.h"
 
+
+
+#include <iostream>
+
 #define IMUL(X,Y)           __mul24(X,Y)
 #define FDIV(X,Y)           __fdividef(X,Y)
 #define FDIV2(X,Y)          ((X) / (Y))
@@ -115,6 +119,30 @@ inline int CuTexImage::BindTextureX(textureReference& texRef1, textureReference&
     }
 }
 //////////////////////////////////////////////////////
+// Error handler //
+#define cudaError(msg) __getLastCudaError(msg, __FILE__, __LINE__)
+#define CudaSafeCall(err) __cudaSafeCall(err, __FILE__, __LINE__)
+
+inline void __getLastCudaError(const char *errorMessage, const char *file, const int line) 
+{
+    cudaDeviceSynchronize();
+    cudaError_t err = cudaGetLastError();
+    if (cudaSuccess != err) 
+    {
+        std::cerr << file << " (" << line << ") : getLastCudaError() CUDA error : " << errorMessage << " : (" << (int) err << ") "
+                  << cudaGetErrorString(err) << std::endl << std:: endl;
+        std::exit(EXIT_FAILURE);
+    }
+}
+
+inline void __cudaSafeCall(cudaError err, const char *file, const int line)
+{
+    __getLastCudaError("", file, line);
+}
+
+
+
+//////////////////////////////////////////////////////
 void ProgramCU::FinishWorkCUDA()
 {
     cudaThreadSynchronize();
@@ -122,7 +150,10 @@ void ProgramCU::FinishWorkCUDA()
 
 int ProgramCU::CheckErrorCUDA(const char* location)
 {
+    // cudaError(loca)
+    cudaDeviceSynchronize();
     cudaError_t e = cudaGetLastError();
+    // std::cout << "error: " << e << std::endl;
     if(e)
     {
         if(location) fprintf(stderr, "%s:\t",  location);
@@ -138,7 +169,8 @@ inline void ProgramCU::GetBlockConfiguration(unsigned int nblock, unsigned int& 
 {
     if(nblock <= MAX_BLOCKLEN)
     {
-        bw = nblock;    bh = 1;
+        bw = nblock;    
+        bh = 1;
     }else
     {
         bh = (nblock + MAX_BLOCKLEN_ALIGN - 1)  / MAX_BLOCKLEN_ALIGN;
@@ -304,6 +336,7 @@ __global__ void vector_norm_kernel(const float* x, int len, int blen, float* res
 
 double ProgramCU::ComputeVectorNorm(CuTexImage& vector, CuTexImage& buf)
 {
+    std::cout << "ComputeVectorNorm" << std::endl;
 
     const unsigned int nblock = REDUCTION_NBLOCK;
     unsigned int  bsize = 256;
@@ -319,7 +352,11 @@ double ProgramCU::ComputeVectorNorm(CuTexImage& vector, CuTexImage& buf)
     ProgramCU::CheckErrorCUDA("ComputeVectorNorm");
 
 
-    float data[nblock]; buf.CopyToHost(data);
+    float data[nblock]; 
+    /// TODO:----------------------------- ERROR !!! ----------------------------------
+    buf.CopyToHost(data);
+    /// TODO:----------------------------- ERROR !!! ----------------------------------
+    
     double result = 0;
     for(unsigned int i = 0; i < nblock; ++i) result += data[i];
     return result;
@@ -661,8 +698,11 @@ texture<int, 1, cudaReadModeElementType>    tex_jacobian_shuffle;
 template<bool md, bool pd, bool scaling, bool shuffle> __global__ void jacobian_frt_kernel(
                 float4* jc, float4* jp, int nproj, int ptx, int rowsz, float jic)
 {
+    printf("*jacobian_frt_kernel");
     ////////////////////////////////
     int  tidx = blockIdx.x * blockDim.x + threadIdx.x + blockIdx.y * rowsz;
+
+    printf("*tidx: %i", tidx);
 
     if(tidx >= nproj) return;
     int2 proj = tex1Dfetch(tex_jacobian_idx, tidx);
@@ -848,79 +888,102 @@ template<bool md, bool pd, bool scaling, bool shuffle> __global__ void jacobian_
 
 }
 
+__global__ void cuda_printf_kernel() {
+    printf("hello");
+}
+
 /////////////////////////////////
 void ProgramCU::ComputeJacobian(CuTexImage& camera, CuTexImage& point, CuTexImage& jc,
                                 CuTexImage& jp, CuTexImage& proj_map, CuTexImage& sj,
                                 CuTexImage& meas, CuTexImage& cmlist,
                                 bool intrinsic_fixed , int radial_distortion, bool shuffle)
 {
-    float jfc = intrinsic_fixed ? 0.0f : 1.0f;
-    unsigned int  len  = proj_map.GetImgWidth();
-    unsigned int  bsize = JACOBIAN_FRT_KWIDTH;
-    unsigned int  nblock = (len + bsize - 1) / bsize;
-    unsigned int bw, bh;
-    GetBlockConfiguration(nblock, bw, bh);
-    dim3 grid(bw, bh), block(bsize);
-
-    camera.BindTexture(tex_jacobian_cam);
-    point.BindTexture(tex_jacobian_pts);
-    proj_map.BindTexture(tex_jacobian_idx);
-
-    if(!jc.IsValid()) shuffle = false;
-    if(shuffle) cmlist.BindTexture(tex_jacobian_shuffle);
-    if(sj.IsValid()) sj.BindTexture(tex_jacobian_sj);
-
-    if(radial_distortion == -1)
-    {
-        meas.BindTexture(tex_jacobian_meas);
-        if(sj.IsValid())
-        {
-            if(shuffle)     jacobian_frt_kernel<true, false, true, true><<<grid, block>>>((float4*) jc.data(), (float4*) jp.data(), len,
-                                                    camera.GetImgWidth() * 2, bw * bsize, jfc);
-            else            jacobian_frt_kernel<true, false, true, false><<<grid, block>>>((float4*) jc.data(), (float4*) jp.data(), len,
-                                                    camera.GetImgWidth() * 2, bw * bsize, jfc);
-        }else
-        {
-            if(shuffle)     jacobian_frt_kernel<true, false, false, true><<<grid, block>>>((float4*) jc.data(), (float4*) jp.data(), len,
-                                                    camera.GetImgWidth() * 2, bw * bsize, jfc);
-            else            jacobian_frt_kernel<true, false, false, false><<<grid, block>>>((float4*) jc.data(), (float4*) jp.data(), len,
-                                                    camera.GetImgWidth() * 2, bw * bsize, jfc);
-        }
-    }else if(radial_distortion)
-    {
-        if(sj.IsValid())
-        {
-            if(shuffle)     jacobian_frt_kernel<false, true, true, true><<<grid, block>>>((float4*) jc.data(), (float4*) jp.data(), len,
-                                                    camera.GetImgWidth() * 2, bw * bsize, jfc);
-            else            jacobian_frt_kernel<false, true, true, false><<<grid, block>>>((float4*) jc.data(), (float4*) jp.data(), len,
-                                                    camera.GetImgWidth() * 2, bw * bsize, jfc);
-        }else
-        {
-            if(shuffle)     jacobian_frt_kernel<false, true, false, true><<<grid, block>>>((float4*) jc.data(), (float4*) jp.data(), len,
-                                                    camera.GetImgWidth() * 2, bw * bsize, jfc);
-            else            jacobian_frt_kernel<false, true, false, false><<<grid, block>>>((float4*) jc.data(), (float4*) jp.data(), len,
-                                                    camera.GetImgWidth() * 2, bw * bsize, jfc);
-        }
-    }else
-    {
-        if(sj.IsValid())
-        {
-            if(shuffle)     jacobian_frt_kernel<false, false, true, true><<<grid, block>>>((float4*) jc.data(), (float4*) jp.data(), len,
-                                                    camera.GetImgWidth() * 2, bw * bsize, jfc);
-            else            jacobian_frt_kernel<false, false, true, false><<<grid, block>>>((float4*) jc.data(), (float4*) jp.data(), len,
-                                                    camera.GetImgWidth() * 2, bw * bsize, jfc);
-        }else
-        {
-            if(shuffle)    jacobian_frt_kernel<false, false, false, true><<<grid, block>>>((float4*) jc.data(), (float4*) jp.data(), len,
-                                                    camera.GetImgWidth() * 2, bw * bsize, jfc);
-            else           jacobian_frt_kernel<false, false, false, false><<<grid, block>>>((float4*) jc.data(), (float4*) jp.data(), len,
-                                                    camera.GetImgWidth() * 2, bw * bsize, jfc);
-        }
-    }
-
     ProgramCU::CheckErrorCUDA("ComputeJacobian");
-}
+    // std::cout << "*ProgramCU::ComputeJacobian()" << std::endl;
+    // float jfc = intrinsic_fixed ? 0.0f : 1.0f;
+    // unsigned int  len  = proj_map.GetImgWidth();
+    // unsigned int  bsize = JACOBIAN_FRT_KWIDTH;
+    // unsigned int  nblock = (len + bsize - 1) / bsize;
+    // unsigned int bw, bh;
+    // GetBlockConfiguration(nblock, bw, bh);
 
+    // std::cout << "*Block Configuration: " << std::endl;
+    // std::cout << "*     number of blocks: "<< nblock << std::endl;
+    // std::cout << "*     block width: " << bw << std::endl;
+    // std::cout << "*     block height: " << bh << std::endl;
+
+    // dim3 grid(bw, bh), block(bsize);
+    
+    
+    // cuda_printf_kernel<<<10, 10>>>();
+
+    // camera.BindTexture(tex_jacobian_cam);
+    // point.BindTexture(tex_jacobian_pts);
+    // proj_map.BindTexture(tex_jacobian_idx);
+
+    // if(!jc.IsValid()) shuffle = false;
+    // if(shuffle) cmlist.BindTexture(tex_jacobian_shuffle);
+    // if(sj.IsValid()) sj.BindTexture(tex_jacobian_sj);
+
+    // std::cout << "*radial_distortion == " << radial_distortion << std::endl;
+    // if(radial_distortion == -1)
+    // {
+    //     meas.BindTexture(tex_jacobian_meas);
+    //     if(sj.IsValid())
+    //     {
+    //         if(shuffle)     jacobian_frt_kernel<true, false, true, true><<<grid, block>>>((float4*) jc.data(), (float4*) jp.data(), len,
+    //                                                 camera.GetImgWidth() * 2, bw * bsize, jfc);
+    //         else            jacobian_frt_kernel<true, false, true, false><<<grid, block>>>((float4*) jc.data(), (float4*) jp.data(), len,
+    //                                                 camera.GetImgWidth() * 2, bw * bsize, jfc);
+    //     }else
+    //     {
+    //         if(shuffle)     jacobian_frt_kernel<true, false, false, true><<<grid, block>>>((float4*) jc.data(), (float4*) jp.data(), len,
+    //                                                 camera.GetImgWidth() * 2, bw * bsize, jfc);
+    //         else            jacobian_frt_kernel<true, false, false, false><<<grid, block>>>((float4*) jc.data(), (float4*) jp.data(), len,
+    //                                                 camera.GetImgWidth() * 2, bw * bsize, jfc);
+    //     }
+    // }else if(radial_distortion)
+    // {
+    //     if(sj.IsValid())
+    //     {
+    //         if(shuffle)     jacobian_frt_kernel<false, true, true, true><<<grid, block>>>((float4*) jc.data(), (float4*) jp.data(), len,
+    //                                                 camera.GetImgWidth() * 2, bw * bsize, jfc);
+    //         else            jacobian_frt_kernel<false, true, true, false><<<grid, block>>>((float4*) jc.data(), (float4*) jp.data(), len,
+    //                                                 camera.GetImgWidth() * 2, bw * bsize, jfc);
+    //     }else
+    //     {
+    //         if(shuffle)     jacobian_frt_kernel<false, true, false, true><<<grid, block>>>((float4*) jc.data(), (float4*) jp.data(), len,
+    //                                                 camera.GetImgWidth() * 2, bw * bsize, jfc);
+    //         else            jacobian_frt_kernel<false, true, false, false><<<grid, block>>>((float4*) jc.data(), (float4*) jp.data(), len,
+    //                                                 camera.GetImgWidth() * 2, bw * bsize, jfc);
+    //     }
+    // }else
+    // {
+    //     if(sj.IsValid())
+    //     {
+    //         if(shuffle)     jacobian_frt_kernel<false, false, true, true><<<grid, block>>>((float4*) jc.data(), (float4*) jp.data(), len,
+    //                                                 camera.GetImgWidth() * 2, bw * bsize, jfc);
+    //         else            jacobian_frt_kernel<false, false, true, false><<<grid, block>>>((float4*) jc.data(), (float4*) jp.data(), len,
+    //                                                 camera.GetImgWidth() * 2, bw * bsize, jfc);
+    //     }else
+    //     {
+    //         std::cout << "*shuffle = " << shuffle << std::endl;
+    //         if(shuffle) 
+    //         {
+    //             jacobian_frt_kernel<false, false, false, true><<<grid, block>>>((float4*) jc.data(), (float4*) jp.data(), len,
+    //                                                 camera.GetImgWidth() * 2, bw * bsize, jfc);
+    //         }
+    //         else
+    //         {
+    //             cuda_printf_kernel<<<grid, block>>>();
+    //             jacobian_frt_kernel<false, false, false, false><<<grid, block>>>((float4*) jc.data(), (float4*) jp.data(), len,
+    //                                                 camera.GetImgWidth() * 2, bw * bsize, jfc);
+    //         }
+    //     }
+    // }
+
+    // ProgramCU::CheckErrorCUDA("ComputeJacobian");
+}
 
 texture<float4,  1, cudaReadModeElementType> tex_compact_cam;
 __global__ void uncompress_frt_kernel(int ncam, float4* ucam)
@@ -1184,7 +1247,8 @@ void ProgramCU::ComputeProjection(CuTexImage& camera, CuTexImage& point, CuTexIm
     if(radial == -1)    projection_frt_kernel<true , false><<<grid, block>>>(len, bw * bsize, (float2*) proj.data());
     else if(radial)     projection_frt_kernel<false, true><<<grid, block>>>(len, bw * bsize, (float2*) proj.data());
     else                projection_frt_kernel<false, false><<<grid, block>>>(len, bw * bsize, (float2*) proj.data());
-    CheckErrorCUDA("ComputeProjection");
+    cudaError("ComputeProjection");
+    // CheckErrorCUDA("ComputeProjection");
 }
 
 template<bool md, bool pd> __global__ void projectionx_frt_kernel(int nproj, int rowsz, float2* pj)
@@ -1248,7 +1312,8 @@ void ProgramCU::ComputeProjectionX(CuTexImage& camera, CuTexImage& point, CuTexI
     if(radial == -1)    projectionx_frt_kernel<true , false><<<grid, block>>>(len, bw * bsize, (float2*) proj.data());
     else if(radial)     projectionx_frt_kernel<false, true><<<grid, block>>>(len, bw * bsize, (float2*) proj.data());
     else                projectionx_frt_kernel<false, false><<<grid, block>>>(len, bw * bsize, (float2*) proj.data());
-    CheckErrorCUDA("ComputeProjection");
+    cudaError("ComputeProjectionX");
+    // CheckErrorCUDA("ComputeProjection");
 }
 
 texture<float2,  1, cudaReadModeElementType> tex_jte_pe;
