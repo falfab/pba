@@ -33,6 +33,7 @@ ENDIF()
 
 SET(CMAKE_C_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Werror -O2 -fPIC")
 SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Werror -O2 -fPIC")
+SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11")
 
 ####
 # find threads
