@@ -22,6 +22,7 @@
 #ifndef _PROGRAM_CU_H
 #define _PROGRAM_CU_H
 
+
 class CuTexImage;
 
 namespace ProgramCU

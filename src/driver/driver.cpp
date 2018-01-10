@@ -19,7 +19,6 @@
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-
 //////////////////////////////////////////////////////////////////////////////
 //      This file shows how to use the C++ class interface
 //              ParallelBA of PBA defined in <src/pba/pba.h>
@@ -39,6 +38,9 @@
 #include <string>
 #include <iomanip>
 #include <algorithm>
+#include <chrono>
+// #include <cuda.h>
+#include <cuda_runtime_api.h>
 using namespace std;
 
 //include the header file
@@ -47,64 +49,66 @@ using namespace std;
 //util.h has several loading/saving functions
 #include "../pba/util.h"
 
-
-int main(int argc, char* argv[])
+int main(int argc, char *argv[])
 {
     //////////////////////////////////////////////////////
-    char* input_filename  = argv[1];            //first argument must be filename
-    char* driver_argument =  argv[argc - 1];    //last argument  for the driver
+    char *input_filename = argv[1];         //first argument must be filename
+    char *driver_argument = argv[argc - 1]; //last argument  for the driver
 
     /////////////////////////////////////////////////////////////////
     //CameraT, Point3D, Point2D are defined in src/pba/DataInterface.h
-    vector<CameraT>        camera_data;    //camera (input/ouput)
-    vector<Point3D>        point_data;     //3D point(iput/output)
-    vector<Point2D>        measurements;   //measurment/projection vector
-    vector<int>            camidx, ptidx;  //index of camera/point for each projection
+    vector<CameraT> camera_data;  //camera (input/ouput)
+    vector<Point3D> point_data;   //3D point(iput/output)
+    vector<Point2D> measurements; //measurment/projection vector
+    vector<int> camidx, ptidx;    //index of camera/point for each projection
 
     /////////////////////////////////////
-    vector<string>         photo_names;        //from NVM file, not used in bundle adjustment
-    vector<int>            point_color;        //from NVM file, not used in bundle adjustment
+    vector<string> photo_names; //from NVM file, not used in bundle adjustment
+    vector<int> point_color;    //from NVM file, not used in bundle adjustment
 
     /////////////////////////////////////////////////////////////
     ///load the data. You will need to replace the loader for your own data
-    if(argc < 2 || ! LoadModelFile(input_filename, camera_data, point_data, measurements,
-                        ptidx, camidx, photo_names, point_color))
+    if (argc < 2 || !LoadModelFile(input_filename, camera_data, point_data, measurements,
+                                   ptidx, camidx, photo_names, point_color))
     {
         std::cout << "==== Multicore Bundle Adjustment ---- Demo Driver Syntax ====\n"
 #ifdef WIN32
-            "driver(_x64)(_debug) "
+                     "driver(_x64)(_debug) "
 #else
-            "driver "
+                     "driver "
 #endif
-            "input [pba parameters][-out output_nvm][driver argument]\n"
-            "    input:            file must be NVM or bundler format\n"
-            "[driver argument] must be the last one. It can be one of the following\n"
-            "    --noise:          add 5% random noise to all parameters\n"
-            "    --float:          use CPU-float implementation instead of GPU\n"
-            "    --double:         use CPU-double implementation instead of GPU\n"
-            "[pba parameters]: -lmi <#>, -cgi <#>, -cgn <f>, -budget <#>...\n"
-            "    -lmi <#>:         specify the number of LM iterations\n"
-            "    -profile:         run profiling experiments and see the speeds\n"
-            "                      check documentation for more details.\n";
+                     "input [pba parameters][-out output_nvm][driver argument]\n"
+                     "    input:            file must be NVM or bundler format\n"
+                     "[driver argument] must be the last one. It can be one of the following\n"
+                     "    --noise:          add 5% random noise to all parameters\n"
+                     "    --float:          use CPU-float implementation instead of GPU\n"
+                     "    --double:         use CPU-double implementation instead of GPU\n"
+                     "[pba parameters]: -lmi <#>, -cgi <#>, -cgn <f>, -budget <#>...\n"
+                     "    -lmi <#>:         specify the number of LM iterations\n"
+                     "    -profile:         run profiling experiments and see the speeds\n"
+                     "                      check documentation for more details.\n";
         return 0;
-    }else
+    }
+    else
     {
         //if(strstr(driver_argument, "--checkv")) ExamineVisiblity(input_filename);
 
         //remove file extension for conversion/saving purpose
-        char* dotpos = strrchr(input_filename, '.');
-        if(dotpos && strchr(dotpos, '/') == NULL && strchr(dotpos, '\\') == NULL) *dotpos = 0;
+        char *dotpos = strrchr(input_filename, '.');
+        if (dotpos && strchr(dotpos, '/') == NULL && strchr(dotpos, '\\') == NULL)
+            *dotpos = 0;
 
         //////////////////////////////////////////////////////////
         //use the last parameter for special purpose.
         string surfix = "-converted";
-        if(strstr(driver_argument, "--fix_visibility"))
+        if (strstr(driver_argument, "--fix_visibility"))
         {
-            if(RemoveInvisiblePoints(camera_data, point_data, ptidx, camidx, measurements, photo_names, point_color))
+            if (RemoveInvisiblePoints(camera_data, point_data, ptidx, camidx, measurements, photo_names, point_color))
                 surfix = "-fixed";
-        }else
+        }
+        else
         {
-            if(strstr(driver_argument, "--noise") != NULL)     //add noise for experimentation
+            if (strstr(driver_argument, "--noise") != NULL) //add noise for experimentation
             {
                 //AddNoise(camera_data, point_data, 0.05f);    //add 5% noise for experiments
                 AddStableNoise(camera_data, point_data, ptidx, camidx, 0.05f);
@@ -113,29 +117,30 @@ int main(int argc, char* argv[])
         }
 
         //file format conversion for experimentation
-        if(strstr(driver_argument, "--convert_to_nvm"))
-            SaveNVM(    (string(input_filename) + surfix + ".nvm").c_str(), camera_data,
-                        point_data, measurements, ptidx, camidx, photo_names, point_color);
-        if(strstr(driver_argument, "--convert_to_bm"))
-            SaveBundlerModel(    (string(input_filename) + surfix + ".txt").c_str(),
-                                camera_data, point_data, measurements, ptidx, camidx);
+        if (strstr(driver_argument, "--convert_to_nvm"))
+            SaveNVM((string(input_filename) + surfix + ".nvm").c_str(), camera_data,
+                    point_data, measurements, ptidx, camidx, photo_names, point_color);
+        if (strstr(driver_argument, "--convert_to_bm"))
+            SaveBundlerModel((string(input_filename) + surfix + ".txt").c_str(),
+                             camera_data, point_data, measurements, ptidx, camidx);
     }
 
     /////////////////////////////////////////////////////////////////////////////////////////
     ParallelBA::DeviceT device = ParallelBA::PBA_CUDA_DEVICE_DEFAULT;
-    if(strstr(driver_argument, "--float"))          device = ParallelBA::PBA_CPU_FLOAT;
-    else if(strstr(driver_argument, "--double"))    device = ParallelBA::PBA_CPU_DOUBLE;
-
+    if (strstr(driver_argument, "--float"))
+        device = ParallelBA::PBA_CPU_FLOAT;
+    else if (strstr(driver_argument, "--double"))
+        device = ParallelBA::PBA_CPU_DOUBLE;
 
     std::cout << "*creating ParallelBA " << device << std::endl;
     /////////////////////////////////////////////////////////////////////
-    ParallelBA pba(device);          //You should reusing the same object for all new data
+    ParallelBA pba(device); //You should reusing the same object for all new data
 
     /////////////////////////////////////////////////////////
     //Parameters can be changed before every call of RunBundleAdjustment
     //But do not change them from another thread when it is running BA.
     std::cout << "*Paring paramenters..." << std::endl;
-    pba.ParseParam(argc, argv);      //indirect parameter tuning from commandline
+    pba.ParseParam(argc, argv); //indirect parameter tuning from commandline
     //pba.SetFixedIntrinsics(true); //if your focal lengths are calibrated.
     //           equivalent to pba.GetInternalConfig()->__fixed_focallength = true;
     //pba.EnableRadialDistortion(*); // if you want to enable radial distortion
@@ -149,14 +154,14 @@ int main(int argc, char* argv[])
 
     ////////////////////////////////////////////////////////////////
     std::cout << "*SetCameraData..." << std::endl;
-    pba.SetCameraData(camera_data.size(),  &camera_data[0]);                        //set camera parameters
+    pba.SetCameraData(camera_data.size(), &camera_data[0]); //set camera parameters
     std::cout << "*SetPointData..." << std::endl;
-    pba.SetPointData(point_data.size(), &point_data[0]);                            //set 3D point data
+    pba.SetPointData(point_data.size(), &point_data[0]); //set 3D point data
     std::cout << "*SetProjection..." << std::endl;
-    pba.SetProjection(measurements.size(), &measurements[0], &ptidx[0], &camidx[0]);//set the projections
+    pba.SetProjection(measurements.size(), &measurements[0], &ptidx[0], &camidx[0]); //set the projections
 
     vector<int> cmask;
-    if(strstr(driver_argument, "--common"))
+    if (strstr(driver_argument, "--common"))
     {
         cmask.resize(camera_data.size(), 0);
         pba.SetFocalMask(&cmask[0]);
@@ -169,13 +174,21 @@ int main(int argc, char* argv[])
     //////////////////////////////////////////////////////
     //pba.SetTimeBudget(10);      //use at most 10 seconds?
     std::cout << "*RunBundleAdjustment..." << std::endl;
-    pba.RunBundleAdjustment();    //run bundle adjustment, and camera_data/point_data will be modified
+    std::chrono::high_resolution_clock::time_point start = std::chrono::high_resolution_clock::now();
+
+    pba.RunBundleAdjustment(); //run bundle adjustment, and camera_data/point_data will be modified
+    cudaDeviceSynchronize();
+
+    std::chrono::high_resolution_clock::time_point finish = std::chrono::high_resolution_clock::now();
     std::cout << "*RunBundleAdjustment... END" << std::endl;
 
+    long int duration = std::chrono::duration_cast<std::chrono::milliseconds>(finish - start).count();
+
+    std::cout << "Execution time: " << duration << " ms." << std::endl;
+
     //Write the optimized system to file
-    const char*  outpath = pba.GetInternalConfig()->GetOutputParam();
+    const char *outpath = pba.GetInternalConfig()->GetOutputParam();
     SaveModelFile(outpath, camera_data, point_data, measurements, ptidx, camidx, photo_names, point_color);
-    //It is easy to visualize the camera/points yourself,
+    //It is easy to visualize the camera/points yourself
     return 0;
 }
-

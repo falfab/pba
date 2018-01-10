@@ -23,9 +23,6 @@
 #include <float.h>
 #include "CuTexImage.h"
 #include "ProgramCU.h"
-
-
-
 #include <iostream>
 
 #define IMUL(X,Y)           __mul24(X,Y)
@@ -38,12 +35,35 @@
 #define REDUCTION_NBLOCK    32
 
 
+//////////////////////////////////////////////////////
+// Error handler //
+#define cudaError(msg) __getLastCudaError(msg, __FILE__, __LINE__)
+#define CudaSafeCall(err) __cudaSafeCall(err, __FILE__, __LINE__)
+
+inline void __getLastCudaError(const char *errorMessage, const char *file, const int line) 
+{
+    cudaDeviceSynchronize();
+    cudaError_t err = cudaGetLastError();
+    if (cudaSuccess != err) 
+    {
+        std::cerr << file << " (" << line << ") : getLastCudaError() CUDA error : " << errorMessage << " : (" << (int) err << ") "
+                  << cudaGetErrorString(err) << std::endl << std:: endl;
+        std::exit(EXIT_FAILURE);
+    }
+}
+
+inline void __cudaSafeCall(cudaError err, const char *file, const int line)
+{
+    __getLastCudaError("", file, line);
+}
+
+
 ///////////////////////////////////////////////////////////////
-inline void CuTexImage:: BindTexture(textureReference& texRef)
+inline void CuTexImage::BindTexture(textureReference& texRef)
 {
     size_t sz = GetDataSize();
     if(sz > MAX_TEXSIZE) fprintf(stderr, "cudaBindTexture: %lu > %d\n", sz , MAX_TEXSIZE);
-    //cudaError_t e =cudaBindTexture(NULL, &texRef, data(), &texRef.channelDesc, sz);
+    cudaError_t e =cudaBindTexture(NULL, &texRef, data(), &texRef.channelDesc, sz);
 }
 
 inline void CuTexImage::BindTexture(textureReference& texRef, int offset, size_t size)
@@ -119,30 +139,6 @@ inline int CuTexImage::BindTextureX(textureReference& texRef1, textureReference&
     }
 }
 //////////////////////////////////////////////////////
-// Error handler //
-#define cudaError(msg) __getLastCudaError(msg, __FILE__, __LINE__)
-#define CudaSafeCall(err) __cudaSafeCall(err, __FILE__, __LINE__)
-
-inline void __getLastCudaError(const char *errorMessage, const char *file, const int line) 
-{
-    cudaDeviceSynchronize();
-    cudaError_t err = cudaGetLastError();
-    if (cudaSuccess != err) 
-    {
-        std::cerr << file << " (" << line << ") : getLastCudaError() CUDA error : " << errorMessage << " : (" << (int) err << ") "
-                  << cudaGetErrorString(err) << std::endl << std:: endl;
-        std::exit(EXIT_FAILURE);
-    }
-}
-
-inline void __cudaSafeCall(cudaError err, const char *file, const int line)
-{
-    __getLastCudaError("", file, line);
-}
-
-
-
-//////////////////////////////////////////////////////
 void ProgramCU::FinishWorkCUDA()
 {
     cudaThreadSynchronize();
@@ -150,10 +146,7 @@ void ProgramCU::FinishWorkCUDA()
 
 int ProgramCU::CheckErrorCUDA(const char* location)
 {
-    // cudaError(loca)
-    cudaDeviceSynchronize();
     cudaError_t e = cudaGetLastError();
-    // std::cout << "error: " << e << std::endl;
     if(e)
     {
         if(location) fprintf(stderr, "%s:\t",  location);
@@ -169,8 +162,7 @@ inline void ProgramCU::GetBlockConfiguration(unsigned int nblock, unsigned int& 
 {
     if(nblock <= MAX_BLOCKLEN)
     {
-        bw = nblock;    
-        bh = 1;
+        bw = nblock;    bh = 1;
     }else
     {
         bh = (nblock + MAX_BLOCKLEN_ALIGN - 1)  / MAX_BLOCKLEN_ALIGN;
@@ -210,7 +202,7 @@ int ProgramCU::SetCudaDevice(int device)
     int count = 0, device_used;
     if(cudaGetDeviceCount(&count) || count <= 0)
     {
-        ProgramCU::CheckErrorCUDA("CheckCudaDevice");
+        cudaError("CheckCudaDevice");
         return 0;
     }else if(count == 1)
     {
@@ -230,7 +222,7 @@ int ProgramCU::SetCudaDevice(int device)
     if(device >0 && device < count)
     {
         cudaSetDevice(device);
-        CheckErrorCUDA("cudaSetDevice\n");
+        cudaError("cudaSetDevice\n");
     }
     cudaGetDevice(&device_used);
     if(device != device_used)
@@ -304,7 +296,7 @@ float ProgramCU::ComputeVectorMax(CuTexImage& vector, CuTexImage& buf)
     /////////////////////////////////
     buf.InitTexture(nblock, 1);
     vector_max_kernel<<<grid, block>>>(vector.data(), len, blen, buf.data());
-    ProgramCU::CheckErrorCUDA("ComputeVectorMax");
+    cudaError("ComputeVectorMax");
 
 
     float data[nblock], result = 0;    buf.CopyToHost(data);
@@ -336,7 +328,6 @@ __global__ void vector_norm_kernel(const float* x, int len, int blen, float* res
 
 double ProgramCU::ComputeVectorNorm(CuTexImage& vector, CuTexImage& buf)
 {
-    std::cout << "ComputeVectorNorm" << std::endl;
 
     const unsigned int nblock = REDUCTION_NBLOCK;
     unsigned int  bsize = 256;
@@ -349,14 +340,10 @@ double ProgramCU::ComputeVectorNorm(CuTexImage& vector, CuTexImage& buf)
     /////////////////////////////////
     buf.InitTexture(nblock, 1);
     vector_norm_kernel<<<grid, block>>>(vector.data(), len, blen,  buf.data());
-    ProgramCU::CheckErrorCUDA("ComputeVectorNorm");
+    cudaError("ComputeVectorNorm");
 
 
-    float data[nblock]; 
-    /// TODO:----------------------------- ERROR !!! ----------------------------------
-    buf.CopyToHost(data);
-    /// TODO:----------------------------- ERROR !!! ----------------------------------
-    
+    float data[nblock]; buf.CopyToHost(data);
     double result = 0;
     for(unsigned int i = 0; i < nblock; ++i) result += data[i];
     return result;
@@ -395,7 +382,7 @@ float ProgramCU::ComputeVectorSum(CuTexImage& vector, CuTexImage& buf, int skip)
     /////////////////////////////////
     buf.InitTexture(nblock, 1);
     vector_sum_kernel<<<grid, block>>>((vector.data()) + skip, len, blen, buf.data());
-    ProgramCU::CheckErrorCUDA("ComputeVectorSum");
+    cudaError("ComputeVectorSum");
 
     float data[nblock]; buf.CopyToHost(data);
     double result  = 0;
@@ -436,7 +423,7 @@ double ProgramCU::ComputeVectorDot(CuTexImage& vector1, CuTexImage& vector2, CuT
     buf.InitTexture(nblock, 1);
     vector_dotproduct_kernel<<<grid, block>>>( vector1.data(), vector2.data(),
                                         len, blen,  buf.data());
-    ProgramCU::CheckErrorCUDA("ComputeVectorDot");
+    cudaError("ComputeVectorDot");
 
 
     float data[nblock];  buf.CopyToHost(data);
@@ -481,7 +468,7 @@ double ProgramCU::ComputeVectorNormW(CuTexImage& vector, CuTexImage& weight, CuT
 
         vector_weighted_norm_kernel<<<grid, block>>>(vector.data(), weight.data(), len, blen, buf.data());
 
-        ProgramCU::CheckErrorCUDA("ComputeVectorNormW");
+        cudaError("ComputeVectorNormW");
 
 
         float data[nblock];  buf.CopyToHost(data);
@@ -525,7 +512,7 @@ void ProgramCU::ComputeSAXPY(float a, CuTexImage& texX, CuTexImage& texY, CuTexI
         dim3 grid(nblock), block(bsize);
         saxpy_kernel<<<grid, block>>>(a, texX.data(),  texY.data(), result.data() , len);
     }
-    ProgramCU::CheckErrorCUDA("ComputeSAXPY");
+    cudaError("ComputeSAXPY");
 }
 
 __global__ void sxypz_kernel_large(float a, const float* x, const float* y, const float* z,
@@ -581,7 +568,7 @@ void ProgramCU::ComputeVXY(CuTexImage& texX, CuTexImage& texY, CuTexImage& resul
         dim3 grid(nblock), block(bsize);
         vxy_kernel<<<grid, block>>>(texX.data() + skip,  texY.data() + skip, result.data() + skip, len);
     }
-    ProgramCU::CheckErrorCUDA("ComputeVXY");
+    cudaError("ComputeVXY");
 }
 
 __global__ void sqrt_kernel_large( float* x, unsigned int len, unsigned int rowsz)
@@ -599,7 +586,7 @@ void ProgramCU::ComputeSQRT(CuTexImage& tex)
     GetBlockConfiguration(nblock, bw, bh);
     dim3 grid(bw, bh), block(bsize);
     sqrt_kernel_large<<<grid, block>>>(tex.data(), len, bw * bsize);
-    ProgramCU::CheckErrorCUDA("ComputeSQRT");
+    cudaError("ComputeSQRT");
 }
 
 
@@ -619,7 +606,7 @@ void ProgramCU::ComputeRSQRT(CuTexImage& tex)
     dim3 grid(bw, bh), block(bsize);
     rsqrt_kernel_large<<<grid, block>>>(tex.data(), len, bw * bsize);
 
-    ProgramCU::CheckErrorCUDA("ComputeRSQRT");
+    cudaError("ComputeRSQRT");
 }
 
 __global__ void sax_kernel(const float a, const float* x, float* result, unsigned int len)
@@ -651,7 +638,7 @@ void ProgramCU::ComputeSAX(float a, CuTexImage& texX, CuTexImage& result)
         dim3 grid(nblock), block(bsize);
         sax_kernel<<<grid, block>>>(a, texX.data(),  result.data(), len);
     }
-    ProgramCU::CheckErrorCUDA("ComputeSAX");
+    cudaError("ComputeSAX");
 
 }
 
@@ -698,27 +685,24 @@ texture<int, 1, cudaReadModeElementType>    tex_jacobian_shuffle;
 template<bool md, bool pd, bool scaling, bool shuffle> __global__ void jacobian_frt_kernel(
                 float4* jc, float4* jp, int nproj, int ptx, int rowsz, float jic)
 {
-    printf("*jacobian_frt_kernel");
     ////////////////////////////////
     int  tidx = blockIdx.x * blockDim.x + threadIdx.x + blockIdx.y * rowsz;
 
-    printf("*tidx: %i", tidx);
-
     if(tidx >= nproj) return;
-    int2 proj = tex1D(tex_jacobian_idx, tidx);
+    int2 proj = tex1Dfetch(tex_jacobian_idx, tidx);
     int camera_pos = proj.x << 1;
 
     __shared__ float rr_data[JACOBIAN_FRT_KWIDTH * 9];
     float *r = rr_data + IMUL(9, threadIdx.x);
-    float4 ft = tex1D(tex_jacobian_cam, camera_pos);
-    float4 r1 = tex1D(tex_jacobian_cam, camera_pos + 1);
+    float4 ft = tex1Dfetch(tex_jacobian_cam, camera_pos);
+    float4 r1 = tex1Dfetch(tex_jacobian_cam, camera_pos + 1);
     r[0] = r1.x;   r[1] = r1.y; r[2] = r1.z;    r[3] = r1.w;
-    float4 r2 = tex1D(tex_jacobian_cam, camera_pos + 2);
+    float4 r2 = tex1Dfetch(tex_jacobian_cam, camera_pos + 2);
     r[4] = r2.x;   r[5] = r2.y; r[6] = r2.z;    r[7] = r2.w;
-    float4 r3 = tex1D(tex_jacobian_cam, camera_pos + 3);
+    float4 r3 = tex1Dfetch(tex_jacobian_cam, camera_pos + 3);
     r[8] = r3.x;
 
-    float4 temp = tex1D(tex_jacobian_pts, proj.y);
+    float4 temp = tex1Dfetch(tex_jacobian_pts, proj.y);
     float m[3];    m[0] = temp.x; m[1] = temp.y; m[2] = temp.z;
 
     float x0 = r[0] * m[0] + r[1] * m[1] + r[2] * m[2];
@@ -737,7 +721,7 @@ template<bool md, bool pd, bool scaling, bool shuffle> __global__ void jacobian_
     int jc_pos;
     if(shuffle)
     {
-        jc_pos = tex1D(tex_jacobian_shuffle, tidx) << 2;
+        jc_pos = tex1Dfetch(tex_jacobian_shuffle, tidx) << 2;
     }else
     {
         jc_pos = tidx << 2;
@@ -780,11 +764,11 @@ template<bool md, bool pd, bool scaling, bool shuffle> __global__ void jacobian_
                 JACOBIAN_SET_JC_BEGIN
                 float jfc = jic * (1 + rr1 + rr2);
                 float ft_x_pn = jic * ft.x * (p0_p2 * p0_p2 + p1_p2 * p1_p2);
-                float4 sc1 = tex1D(tex_jacobian_sj, proj.x);
+                float4 sc1 = tex1Dfetch(tex_jacobian_sj, proj.x);
                 jc[jc_pos    ] = make_float4(   p0_p2 * jfc * sc1.x, f_p2_x * sc1.y, 0, -f_p2_x * p0_p2 * sc1.w);
                 jc[jc_pos + 2] = make_float4(   p1_p2 * jfc * sc1.x, 0, f_p2_y * sc1.z, -f_p2_y * p1_p2 * sc1.w);
 
-                float4 sc2 = tex1D(tex_jacobian_sj, proj.x + 1);
+                float4 sc2 = tex1Dfetch(tex_jacobian_sj, proj.x + 1);
                 jc[jc_pos + 1] = make_float4(  -sc2.x * f_p2_x * p0_p2 * y0,            sc2.y * f_p2_x * (z0 + x0 * p0_p2),
                                                 -sc2.z * f_p2_x * y0, ft_x_pn * p0_p2 * sc2.w);
                 jc[jc_pos + 3] = make_float4(  -sc2.x * f_p2_y * (z0 + y0 * p1_p2),    sc2.y * f_p2_y * x0 * p1_p2,
@@ -792,7 +776,7 @@ template<bool md, bool pd, bool scaling, bool shuffle> __global__ void jacobian_
                 JFRT_SET_JC_END
             }
 
-            float4 sc3 = tex1D(tex_jacobian_sj, proj.y + ptx);
+            float4 sc3 = tex1Dfetch(tex_jacobian_sj, proj.y + ptx);
             jp[(tidx << 1)    ] = make_float4(  sc3.x * f_p2_x * (r[0]- r[6] * p0_p2), sc3.y * f_p2_x * (r[1]- r[7] * p0_p2),
                                                 sc3.z * f_p2_x * (r[2]- r[8] * p0_p2), 0);
             jp[(tidx << 1) + 1] = make_float4(  sc3.x * f_p2_y * (r[3]- r[6] * p1_p2), sc3.y * f_p2_y * (r[4]- r[7] * p1_p2),
@@ -806,7 +790,7 @@ template<bool md, bool pd, bool scaling, bool shuffle> __global__ void jacobian_
             if(jc)
             {
                 JACOBIAN_SET_JC_BEGIN
-                float2 ms = tex1D(tex_jacobian_meas, tidx);
+                float2 ms = tex1Dfetch(tex_jacobian_meas, tidx);
                 float  msn = (ms.x * ms.x + ms.y * ms.y) * jic;
                 jc[jc_pos    ] = make_float4(   p0_p2 * jic, f_p2, 0, -f_p2 * p0_p2);
                 jc[jc_pos + 1] = make_float4(  -f_p2 * p0_p2 * y0, f_p2 * (z0 + x0 * p0_p2), -f_p2 * y0, -ms.x * msn);
@@ -824,12 +808,12 @@ template<bool md, bool pd, bool scaling, bool shuffle> __global__ void jacobian_
             if(jc)
             {
                 JACOBIAN_SET_JC_BEGIN
-                float4 sc1 = tex1D(tex_jacobian_sj, proj.x);
+                float4 sc1 = tex1Dfetch(tex_jacobian_sj, proj.x);
                 jc[jc_pos    ] = make_float4(   p0_p2 * jic * sc1.x, f_p2 * sc1.y, 0, -f_p2 * p0_p2 * sc1.w);
                 jc[jc_pos + 2] = make_float4(   p1_p2 * jic * sc1.x, 0, f_p2 * sc1.z, -f_p2 * p1_p2 * sc1.w);
 
-                float4 sc2 = tex1D(tex_jacobian_sj, proj.x + 1);
-                float2 ms = tex1D(tex_jacobian_meas, tidx);
+                float4 sc2 = tex1Dfetch(tex_jacobian_sj, proj.x + 1);
+                float2 ms = tex1Dfetch(tex_jacobian_meas, tidx);
                 float  msn = (ms.x * ms.x + ms.y * ms.y) * jic;
                 jc[jc_pos + 1] = make_float4(  -sc2.x * f_p2 * p0_p2 * y0,            sc2.y * f_p2 * (z0 + x0 * p0_p2),
                                                 -sc2.z * f_p2 * y0, -msn * ms.x * sc2.w);
@@ -837,7 +821,7 @@ template<bool md, bool pd, bool scaling, bool shuffle> __global__ void jacobian_
                                                 sc2.z * f_p2 * x0, -msn * ms.y * sc2.w);
                 JFRT_SET_JC_END
             }
-            float4 sc3 = tex1D(tex_jacobian_sj, proj.y + ptx);
+            float4 sc3 = tex1Dfetch(tex_jacobian_sj, proj.y + ptx);
             jp[(tidx << 1)    ] = make_float4(  sc3.x * f_p2 * (r[0]- r[6] * p0_p2), sc3.y * f_p2 * (r[1]- r[7] * p0_p2),
                                                 sc3.z * f_p2 * (r[2]- r[8] * p0_p2), 0);
             jp[(tidx << 1) + 1] = make_float4(  sc3.x * f_p2 * (r[3]- r[6] * p1_p2), sc3.y * f_p2 * (r[4]- r[7] * p1_p2),
@@ -867,10 +851,10 @@ template<bool md, bool pd, bool scaling, bool shuffle> __global__ void jacobian_
             if(jc)
             {
                 JACOBIAN_SET_JC_BEGIN
-                float4 sc1 = tex1D(tex_jacobian_sj, proj.x);
+                float4 sc1 = tex1Dfetch(tex_jacobian_sj, proj.x);
                 jc[jc_pos    ] = make_float4(   p0_p2 * jic * sc1.x,    f_p2 * sc1.y, 0, -f_p2 * p0_p2 * sc1.w);
                 jc[jc_pos + 2] = make_float4(   p1_p2 * jic * sc1.x, 0, f_p2 * sc1.z, -f_p2 * p1_p2 * sc1.w);
-                float4 sc2 = tex1D(tex_jacobian_sj, proj.x + 1);
+                float4 sc2 = tex1Dfetch(tex_jacobian_sj, proj.x + 1);
                 jc[jc_pos + 1] = make_float4(  -sc2.x *f_p2 * p0_p2 * y0,
                                                 sc2.y * f_p2 * (z0 + x0 * p0_p2),   -sc2.z * f_p2 * y0, 0);
                 jc[jc_pos + 3] = make_float4(  -sc2.x * f_p2 * (z0 + y0 * p1_p2),    sc2.y * f_p2 * x0 * p1_p2,
@@ -878,7 +862,7 @@ template<bool md, bool pd, bool scaling, bool shuffle> __global__ void jacobian_
                 JFRT_SET_JC_END
             }
 
-            float4 sc3 = tex1D(tex_jacobian_sj, proj.y + ptx);
+            float4 sc3 = tex1Dfetch(tex_jacobian_sj, proj.y + ptx);
             jp[(tidx << 1)    ] = make_float4(  sc3.x * f_p2 * (r[0]- r[6] * p0_p2), sc3.y * f_p2 * (r[1]- r[7] * p0_p2),
                                                 sc3.z * f_p2 * (r[2]- r[8] * p0_p2), 0);
             jp[(tidx << 1) + 1] = make_float4(  sc3.x * f_p2 * (r[3]- r[6] * p1_p2), sc3.y * f_p2 * (r[4]- r[7] * p1_p2),
@@ -888,34 +872,19 @@ template<bool md, bool pd, bool scaling, bool shuffle> __global__ void jacobian_
 
 }
 
-__global__ void cuda_printf_kernel() {
-    printf("hello");
-}
-
 /////////////////////////////////
 void ProgramCU::ComputeJacobian(CuTexImage& camera, CuTexImage& point, CuTexImage& jc,
                                 CuTexImage& jp, CuTexImage& proj_map, CuTexImage& sj,
                                 CuTexImage& meas, CuTexImage& cmlist,
                                 bool intrinsic_fixed , int radial_distortion, bool shuffle)
 {
-    ProgramCU::CheckErrorCUDA("ComputeJacobian");
-    std::cout << "*ProgramCU::ComputeJacobian()" << std::endl;
     float jfc = intrinsic_fixed ? 0.0f : 1.0f;
     unsigned int  len  = proj_map.GetImgWidth();
     unsigned int  bsize = JACOBIAN_FRT_KWIDTH;
     unsigned int  nblock = (len + bsize - 1) / bsize;
     unsigned int bw, bh;
     GetBlockConfiguration(nblock, bw, bh);
-
-    std::cout << "*Block Configuration: " << std::endl;
-    std::cout << "*     number of blocks: "<< nblock << std::endl;
-    std::cout << "*     block width: " << bw << std::endl;
-    std::cout << "*     block height: " << bh << std::endl;
-
     dim3 grid(bw, bh), block(bsize);
-    
-    
-    cuda_printf_kernel<<<10, 10>>>();
 
     camera.BindTexture(tex_jacobian_cam);
     point.BindTexture(tex_jacobian_pts);
@@ -925,7 +894,6 @@ void ProgramCU::ComputeJacobian(CuTexImage& camera, CuTexImage& point, CuTexImag
     if(shuffle) cmlist.BindTexture(tex_jacobian_shuffle);
     if(sj.IsValid()) sj.BindTexture(tex_jacobian_sj);
 
-    std::cout << "*radial_distortion == " << radial_distortion << std::endl;
     if(radial_distortion == -1)
     {
         meas.BindTexture(tex_jacobian_meas);
@@ -967,23 +935,30 @@ void ProgramCU::ComputeJacobian(CuTexImage& camera, CuTexImage& point, CuTexImag
                                                     camera.GetImgWidth() * 2, bw * bsize, jfc);
         }else
         {
-            std::cout << "*shuffle = " << shuffle << std::endl;
-            if(shuffle) 
-            {
-                jacobian_frt_kernel<false, false, false, true><<<grid, block>>>((float4*) jc.data(), (float4*) jp.data(), len,
+            if(shuffle)    jacobian_frt_kernel<false, false, false, true><<<grid, block>>>((float4*) jc.data(), (float4*) jp.data(), len,
                                                     camera.GetImgWidth() * 2, bw * bsize, jfc);
-            }
-            else
-            {
-                cuda_printf_kernel<<<grid, block>>>();
-                jacobian_frt_kernel<false, false, false, false><<<grid, block>>>((float4*) jc.data(), (float4*) jp.data(), len,
+            else           jacobian_frt_kernel<false, false, false, false><<<grid, block>>>((float4*) jc.data(), (float4*) jp.data(), len,
                                                     camera.GetImgWidth() * 2, bw * bsize, jfc);
-            }
         }
     }
 
-    ProgramCU::CheckErrorCUDA("ComputeJacobian");
+    //*** prova unbind
+
+    cudaUnbindTexture(tex_jacobian_cam);
+    cudaUnbindTexture(tex_jacobian_pts);
+    cudaUnbindTexture(tex_jacobian_idx);
+
+    if(shuffle) cudaUnbindTexture(tex_jacobian_shuffle);
+    if(sj.IsValid()) cudaUnbindTexture(tex_jacobian_sj);
+
+    if(radial_distortion == -1)
+    {
+        cudaUnbindTexture(tex_jacobian_meas);
+    }
+
+    cudaError("ComputeJacobian");
 }
+
 
 texture<float4,  1, cudaReadModeElementType> tex_compact_cam;
 __global__ void uncompress_frt_kernel(int ncam, float4* ucam)
@@ -992,10 +967,10 @@ __global__ void uncompress_frt_kernel(int ncam, float4* ucam)
     if(tidx >= ncam) return;
     int fetch_index = tidx << 1;
     int write_index = IMUL(tidx, 4);
-    float4 temp1 = tex1D(tex_compact_cam, fetch_index);
+    float4 temp1 = tex1Dfetch(tex_compact_cam, fetch_index);
     ucam[write_index    ] = temp1;
 
-    float4 temp2 = tex1D(tex_compact_cam, fetch_index + 1);
+    float4 temp2 = tex1Dfetch(tex_compact_cam, fetch_index + 1);
     float rx = temp2.x;
     float ry = temp2.y;
     float rz = temp2.z;
@@ -1038,7 +1013,7 @@ void ProgramCU::UncompressCamera(int ncam, CuTexImage& camera, CuTexImage& resul
     dim3 block(bsize);
     camera.BindTexture(tex_compact_cam);
     uncompress_frt_kernel<<<grid, block>>>(len, (float4*) result.data());
-    CheckErrorCUDA("UncompressCamera");
+    cudaError("UncompressCamera");
 }
 
 
@@ -1051,13 +1026,13 @@ __global__ void compress_frt_kernel(int ncam, float4* zcam)
     if(tidx >= ncam) return;
     int fetch_index = tidx << 2;
     int write_index = tidx << 1;
-    float4 temp1 = tex1D(tex_compact_cam, fetch_index);
+    float4 temp1 = tex1Dfetch(tex_compact_cam, fetch_index);
     zcam[write_index] = temp1;
 
 
-    float4 r1 = tex1D(tex_compact_cam, fetch_index + 1);
-    float4 r2 = tex1D(tex_compact_cam, fetch_index + 2);
-    float4 r3 = tex1D(tex_compact_cam, fetch_index + 3);
+    float4 r1 = tex1Dfetch(tex_compact_cam, fetch_index + 1);
+    float4 r2 = tex1Dfetch(tex_compact_cam, fetch_index + 2);
+    float4 r3 = tex1Dfetch(tex_compact_cam, fetch_index + 3);
 
     float a = (r1.x + r2.x + r3.x - 1.0)/2.0;
     if(a >= 1.0)
@@ -1078,7 +1053,8 @@ void ProgramCU::CompressCamera(int ncam, CuTexImage& camera0, CuTexImage& result
     dim3 grid(nblock), block(bsize);
     camera0.BindTexture(tex_uncompressed_cam);
     compress_frt_kernel<<<grid, block>>>(ncam, (float4*) result.data());
-    CheckErrorCUDA("CompressCamera");
+    cudaUnbindTexture(tex_uncompressed_cam);
+    cudaError("CompressCamera");
 }
 
 
@@ -1122,21 +1098,21 @@ __global__ void update_camera_kernel(int ncam, float4*newcam)
     int index0 = tidx << 2;
     int index1 = tidx << 1;
     {
-        float4 c1  = tex1D(tex_update_cam,          index0);
-        float4 d1  = tex1D(tex_update_cam_delta, index1);
+        float4 c1  = tex1Dfetch(tex_update_cam,          index0);
+        float4 d1  = tex1Dfetch(tex_update_cam_delta, index1);
         float4 c2 = make_float4(max(c1.x + d1.x, 1e-10f), c1.y + d1.y, c1.z + d1.z, c1.w + d1.w);
         newcam[index0] = c2;
     }
     {
         float r[9], dr[9];//, nr[9];
-        float4 r1 = tex1D(tex_update_cam, index0 + 1);
+        float4 r1 = tex1Dfetch(tex_update_cam, index0 + 1);
         r[0] = r1.x;   r[1] = r1.y; r[2] = r1.z;    r[3] = r1.w;
-        float4 r2 = tex1D(tex_update_cam, index0 + 2);
+        float4 r2 = tex1Dfetch(tex_update_cam, index0 + 2);
         r[4] = r2.x;   r[5] = r2.y; r[6] = r2.z;    r[7] = r2.w;
-        float4 r3 = tex1D(tex_update_cam, index0 + 3);
+        float4 r3 = tex1Dfetch(tex_update_cam, index0 + 3);
         r[8] = r3.x;
 
-        float4 dd = tex1D(tex_update_cam_delta, index1 + 1);
+        float4 dd = tex1Dfetch(tex_update_cam_delta, index1 + 1);
         uncompress_rodrigues_rotation(dd.x, dd.y, dd.z, dr);
 
         ///////////////////////////////////////////////
@@ -1165,7 +1141,9 @@ void ProgramCU::UpdateCameraPoint(int ncam, CuTexImage& camera, CuTexImage& poin
         camera.BindTexture(tex_update_cam);
         delta.BindTexture(tex_update_cam_delta);
         update_camera_kernel<<<grid, block>>>(len, (float4*) new_camera.data());
-        CheckErrorCUDA("UpdateCamera");
+        cudaUnbindTexture(tex_update_cam);
+        cudaUnbindTexture(tex_update_cam_delta);
+        cudaError("UpdateCamera");
     }
 
     //update the points
@@ -1173,7 +1151,7 @@ void ProgramCU::UpdateCameraPoint(int ncam, CuTexImage& camera, CuTexImage& poin
     {
         CuTexImage dp; dp.SetTexture(delta.data() + 8 * ncam, point.GetLength());
         ComputeSAXPY(1.0f, dp, point, new_point);
-        CheckErrorCUDA("UpdatePoint");
+        cudaError("UpdatePoint");
     }
 }
 
@@ -1189,94 +1167,48 @@ template<bool md, bool pd> __global__ void projection_frt_kernel(int nproj, int 
 {
     ////////////////////////////////
     int  tidx = threadIdx.x + blockIdx.x * blockDim.x + blockIdx.y * rowsz;
-
-    // int THREAD_SCOPE = 1;
-
-    // if (tidx == THREAD_SCOPE) printf("nproj: %i\n", nproj);
-    // if (tidx == THREAD_SCOPE) printf("rowsz: %i\n", rowsz);
-    // if (tidx == THREAD_SCOPE) printf("pj: %fx, %fy\n", pj.x, pj.y);
-    // if(tidx >= nproj) return;
+    // printf("\ttidx: %i\n", tidx);
+    if(tidx >= nproj) return;
     float f, m[3], t[3];// r[9],
     __shared__ float rr_data[PROJECTION_FRT_KWIDTH * 9];
     float *r = rr_data + IMUL(9, threadIdx.x);
-
-
-    // ERRORE
-    // if (tidx == THREAD_SCOPE) printf("r: %f\n", &r);
-    // int2 proj = tex1D(tex_projection_idx, tidx);
-    int2 proj = tex1D(tex_projection_idx, tidx);
-
-    printf("Thread id: %i\n", tidx);
-
-    // if (tidx == THREAD_SCOPE) printf("proj: %ix, %iy\n", proj.x, proj.y);
+    // printf("tex_proj_idx: %i\t%i\ttidx: %i\n", tex_projection_idx, tidx);
+    int2 proj = tex1Dfetch(tex_projection_idx, tidx);
+    // printf("dopo");
     int cpos = proj.x << 1;
-    // if (tidx == THREAD_SCOPE) printf("cpos: %i\n", cpos);
-    // float4 ft = tex1D(tex_projection_cam , cpos);
-    float4 ft = tex1D(tex_projection_cam , cpos);
+    float4 ft = tex1Dfetch(tex_projection_cam , cpos);
     f = ft.x;   t[0] = ft.y;    t[1] = ft.z;    t[2] = ft.w;
-    // if (tidx == THREAD_SCOPE) printf("f: %f\n", f);
-    // if (tidx == THREAD_SCOPE) {
-    //     for (int i = 0; i < 3; i ++) {
-    //         printf("t[%i]: %f\n", i, t[i]);
-    //     }
-    // }
-    // float4 r1 = tex1D(tex_projection_cam, cpos+ 1);
-    float4 r1 = tex1D(tex_projection_cam, cpos+ 1);
+    float4 r1 = tex1Dfetch(tex_projection_cam, cpos+ 1);
     r[0] = r1.x;   r[1] = r1.y; r[2] = r1.z;    r[3] = r1.w;
-    // float4 r2 = tex1D(tex_projection_cam, cpos + 2);
-    float4 r2 = tex1D(tex_projection_cam, cpos + 2);
+    float4 r2 = tex1Dfetch(tex_projection_cam, cpos + 2);
     r[4] = r2.x;   r[5] = r2.y; r[6] = r2.z;    r[7] = r2.w;
-    // float4 r3 = tex1D(tex_projection_cam, cpos + 3);
-    float4 r3 = tex1D(tex_projection_cam, cpos + 3);
+    float4 r3 = tex1Dfetch(tex_projection_cam, cpos + 3);
     r[8] = r3.x;
 
-
-    // if (tidx == THREAD_SCOPE) {
-    //     for (int i = 0; i < 9; i ++) {
-    //         printf("t[%i]: %f\n", i, r[i]);
-    //     }
-    // }
-
-    // float4 temp = tex1D(tex_projection_pts, proj.y);
-    float4 temp = tex1D(tex_projection_pts, proj.y);
+    float4 temp = tex1Dfetch(tex_projection_pts, proj.y);
     m[0] = temp.x;    m[1] = temp.y;    m[2] = temp.z;
-
-    // if (tidx == THREAD_SCOPE) {
-    //     for (int i = 0; i < 3; i ++) {
-    //         printf("t[%i]: %f\n", i, m[i]);
-    //     }
-    // }
 
     float p0 = r[0]*m[0]+r[1]*m[1]+r[2]*m[2] + t[0];
     float p1 = r[3]*m[0]+r[4]*m[1]+r[5]*m[2] + t[1];
     float p2 = r[6]*m[0]+r[7]*m[1]+r[8]*m[2] + t[2];
-    // if (tidx == THREAD_SCOPE) printf("p0: %f\n", p0);
-    // if (tidx == THREAD_SCOPE) printf("p1: %f\n", p1);
-    // if (tidx == THREAD_SCOPE) printf("p2: %f\n", p2);
 
     if(pd)
     {
         float rr = 1.0  + r3.y * (p0 * p0 + p1 * p1) / (p2 * p2);
         float f_p2 = FDIV2(f * rr, p2);
-        // float2 ms = tex1D(tex_projection_mea, tidx);
-        float2 ms = tex1D(tex_projection_mea, tidx);
+        float2 ms = tex1Dfetch(tex_projection_mea, tidx);
         pj[tidx] = make_float2(ms.x - p0 * f_p2,  ms.y - p1 * f_p2);
     }else if(md)
     {
         float f_p2 = FDIV2(f, p2);
-        // float2 ms = tex1D(tex_projection_mea, tidx);
-        float2 ms = tex1D(tex_projection_mea, tidx);
+        float2 ms = tex1Dfetch(tex_projection_mea, tidx);
         float  rd = 1.0 + r3.y * (ms.x * ms.x + ms.y * ms.y) ;
         pj[tidx] = make_float2(ms.x * rd  - p0 * f_p2,  ms.y * rd- p1 * f_p2);
     }else
     {
         float f_p2 = FDIV2(f, p2);
-        // if (tidx == THREAD_SCOPE) printf("f_p2: %f\n", f_p2);
-        // float2 ms = tex1D(tex_projection_mea, tidx);
-        float2 ms = tex1D(tex_projection_mea, tidx);
-        // if (tidx == THREAD_SCOPE) printf("proj: %fx, %fy\n", ms.x, ms.y);
+        float2 ms = tex1Dfetch(tex_projection_mea, tidx);
         pj[tidx] = make_float2(ms.x - p0 * f_p2,  ms.y - p1 * f_p2);
-        // if (tidx == THREAD_SCOPE) printf("pj[tidx]: %fx, %fy\n", pj[tidx].x, pj[tidx].y);
     }
 }
 
@@ -1292,28 +1224,16 @@ void ProgramCU::ComputeProjection(CuTexImage& camera, CuTexImage& point, CuTexIm
     unsigned int bw, bh;
     GetBlockConfiguration(nblock, bw, bh);
     dim3 grid(bw, bh), block(bsize);
-    std::cout << "block_width: " << bw << std::endl << "block_height: " << bh << std::endl << "block_size: " << bsize << std::endl;
     meas.BindTexture(tex_projection_mea);
-    std::cout << "nproj: " << len << "\nrowsz: " << bw * bsize << std::endl;
-
-    float* p = proj.data();
-
-    std::cout << "Length: " << proj.GetLength() << std::endl;
-    std::cout << "Width: " << proj.GetImgWidth() << std::endl;
-    std::cout << "Heigth: " << proj.GetImgHeight() << std::endl;
-
-    // proj.SaveToFile("img.txt");
-
-    // for (int i = 0; i < (int)proj.GetLength(); i++) {
-    //     std::cout << "data X: " << p[i] << std::endl;
-    // }
-
-
     if(radial == -1)    projection_frt_kernel<true , false><<<grid, block>>>(len, bw * bsize, (float2*) proj.data());
     else if(radial)     projection_frt_kernel<false, true><<<grid, block>>>(len, bw * bsize, (float2*) proj.data());
     else                projection_frt_kernel<false, false><<<grid, block>>>(len, bw * bsize, (float2*) proj.data());
+
+    cudaUnbindTexture(tex_projection_cam);
+    cudaUnbindTexture(tex_projection_pts);
+    cudaUnbindTexture(tex_projection_idx);
+    cudaUnbindTexture(tex_projection_mea);
     cudaError("ComputeProjection");
-    // CheckErrorCUDA("ComputeProjection");
 }
 
 template<bool md, bool pd> __global__ void projectionx_frt_kernel(int nproj, int rowsz, float2* pj)
@@ -1324,24 +1244,18 @@ template<bool md, bool pd> __global__ void projectionx_frt_kernel(int nproj, int
     float f, m[3], t[3];// r[9],
     __shared__ float rr_data[PROJECTION_FRT_KWIDTH * 9];
     float *r = rr_data + IMUL(9, threadIdx.x);
-    // int2 proj = tex1D(tex_projection_idx, tidx);
-    int2 proj = tex1D(tex_projection_idx, tidx);
+    int2 proj = tex1Dfetch(tex_projection_idx, tidx);
     int cpos = proj.x << 1;
-    // float4 ft = tex1D(tex_projection_cam , cpos);
-    float4 ft = tex1D(tex_projection_cam , cpos);
+    float4 ft = tex1Dfetch(tex_projection_cam , cpos);
     f = ft.x;   t[0] = ft.y;    t[1] = ft.z;    t[2] = ft.w;
-    // float4 r1 = tex1D(tex_projection_cam, cpos+ 1);
-    float4 r1 = tex1D(tex_projection_cam, cpos+ 1);
+    float4 r1 = tex1Dfetch(tex_projection_cam, cpos+ 1);
     r[0] = r1.x;   r[1] = r1.y; r[2] = r1.z;    r[3] = r1.w;
-    // float4 r2 = tex1D(tex_projection_cam, cpos + 2);
-    float4 r2 = tex1D(tex_projection_cam, cpos + 2);
+    float4 r2 = tex1Dfetch(tex_projection_cam, cpos + 2);
     r[4] = r2.x;   r[5] = r2.y; r[6] = r2.z;    r[7] = r2.w;
-    // float4 r3 = tex1D(tex_projection_cam, cpos + 3);
-    float4 r3 = tex1D(tex_projection_cam, cpos + 3);
+    float4 r3 = tex1Dfetch(tex_projection_cam, cpos + 3);
     r[8] = r3.x;
 
-    // float4 temp = tex1D(tex_projection_pts, proj.y);
-    float4 temp = tex1D(tex_projection_pts, proj.y);
+    float4 temp = tex1Dfetch(tex_projection_pts, proj.y);
     m[0] = temp.x;    m[1] = temp.y;    m[2] = temp.z;
 
     float p0=r[0]*m[0]+r[1]*m[1]+r[2]*m[2] + t[0];
@@ -1351,21 +1265,18 @@ template<bool md, bool pd> __global__ void projectionx_frt_kernel(int nproj, int
     {
         float rr = 1.0  + r3.y * (p0 * p0 + p1 * p1) / (p2 * p2);
         float f_p2 = FDIV2(f, p2);
-        // float2 ms = tex1D(tex_projection_mea, tidx);
-        float2 ms = tex1D(tex_projection_mea, tidx);
+        float2 ms = tex1Dfetch(tex_projection_mea, tidx);
         pj[tidx] = make_float2(ms.x / rr - p0 * f_p2,  ms.y / rr - p1 * f_p2);
     }else if(md)
     {
         float f_p2 = FDIV2(f, p2);
-        // float2 ms = tex1D(tex_projection_mea, tidx);
-        float2 ms = tex1D(tex_projection_mea, tidx);
+        float2 ms = tex1Dfetch(tex_projection_mea, tidx);
         float  rd = 1.0 + r3.y * (ms.x * ms.x + ms.y * ms.y) ;
         pj[tidx] = make_float2(ms.x  - p0 * f_p2 / rd,  ms.y - p1 * f_p2 / rd);
     }else
     {
         float f_p2 = FDIV2(f, p2);
-        // float2 ms = tex1D(tex_projection_mea, tidx);
-        float2 ms = tex1D(tex_projection_mea, tidx);
+        float2 ms = tex1Dfetch(tex_projection_mea, tidx);
         pj[tidx] = make_float2(ms.x - p0 * f_p2,  ms.y - p1 * f_p2);
     }
 }
@@ -1386,8 +1297,11 @@ void ProgramCU::ComputeProjectionX(CuTexImage& camera, CuTexImage& point, CuTexI
     if(radial == -1)    projectionx_frt_kernel<true , false><<<grid, block>>>(len, bw * bsize, (float2*) proj.data());
     else if(radial)     projectionx_frt_kernel<false, true><<<grid, block>>>(len, bw * bsize, (float2*) proj.data());
     else                projectionx_frt_kernel<false, false><<<grid, block>>>(len, bw * bsize, (float2*) proj.data());
-    cudaError("ComputeProjectionX");
-    // CheckErrorCUDA("ComputeProjection");
+    cudaUnbindTexture(tex_projection_cam);
+    cudaUnbindTexture(tex_projection_pts);
+    cudaUnbindTexture(tex_projection_idx);
+    cudaUnbindTexture(tex_projection_mea);
+    cudaError("ComputeProjection");
 }
 
 texture<float2,  1, cudaReadModeElementType> tex_jte_pe;
@@ -1410,8 +1324,8 @@ __global__ void jte_cam_kernel(int num, float* jc, float* jte)
     int cam = col >> 4;            //8 thread per camera
 
     //read data range for this camera, 8 thread will do the same thing
-    int idx1 = tex1D(tex_jte_cmp, cam) << 4;        //first camera
-    int idx2 = tex1D(tex_jte_cmp, cam + 1) << 4;    //last camera + 1
+    int idx1 = tex1Dfetch(tex_jte_cmp, cam) << 4;        //first camera
+    int idx2 = tex1Dfetch(tex_jte_cmp, cam + 1) << 4;    //last camera + 1
 
     ///////////////////////////////
     int offset = threadIdx.x & 0xf;        //which parameter of this camera
@@ -1425,8 +1339,8 @@ __global__ void jte_cam_kernel(int num, float* jc, float* jte)
     {
         float temp =  jc[i];
         //every 8 thread will read the same position.
-        int index = tex1D(tex_jte_cmt, i >> 4);
-        float v = tex1D(tex_jte_pex, (index << 1) + part);
+        int index = tex1Dfetch(tex_jte_cmt, i >> 4);
+        float v = tex1Dfetch(tex_jte_pex, (index << 1) + part);
         //////////////////////
         result += temp * v;
     }
@@ -1443,8 +1357,8 @@ template<int KH, int TEXN> __global__ void jte_cam_vec_kernel(int num, float* jt
 
     //read data range for this camera
     //8 thread will do the same thing
-    int idx1 = tex1D(tex_jte_cmp, cam) << 2;        //first camera
-    int idx2 = tex1D(tex_jte_cmp, cam + 1) << 2;    //last camera + 1
+    int idx1 = tex1Dfetch(tex_jte_cmp, cam) << 2;        //first camera
+    int idx2 = tex1Dfetch(tex_jte_cmp, cam + 1) << 2;    //last camera + 1
     int part = (threadIdx.x & 0x02) ? 1 : 0;
 
     float rx = 0, ry = 0, rz = 0, rw = 0;
@@ -1455,27 +1369,27 @@ template<int KH, int TEXN> __global__ void jte_cam_vec_kernel(int num, float* jt
         float4 temp;
         if(TEXN == 1)
         {
-            temp = tex1D(tex_jte_jc, i);
+            temp = tex1Dfetch(tex_jte_jc, i);
         }
         if(TEXN == 2)
         {
             int texid = i >> 25;
-            if(texid == 0) temp = tex1D(tex_jte_jc, i);
-            else           temp = tex1D(tex_jte_jc2, (i&0x1ffffff));
+            if(texid == 0) temp = tex1Dfetch(tex_jte_jc, i);
+            else           temp = tex1Dfetch(tex_jte_jc2, (i&0x1ffffff));
         }
         if(TEXN == 4)
         {
-            int index = tex1D(tex_jte_cmt, i >> 2);
+            int index = tex1Dfetch(tex_jte_cmt, i >> 2);
             int iii =  (index << 2)  + (i & 0x3);
             int texid = iii >> 25;
             /////////////////////////////////
-            if     (texid == 0) temp = tex1D(tex_jte_jc , iii);
-            else if(texid == 1) temp = tex1D(tex_jte_jc2, (iii&0x1ffffff));
-            else if(texid == 2) temp = tex1D(tex_jte_jc3, (iii&0x1ffffff));
-            else                temp = tex1D(tex_jte_jc4, (iii&0x1ffffff));
+            if     (texid == 0) temp = tex1Dfetch(tex_jte_jc , iii);
+            else if(texid == 1) temp = tex1Dfetch(tex_jte_jc2, (iii&0x1ffffff));
+            else if(texid == 2) temp = tex1Dfetch(tex_jte_jc3, (iii&0x1ffffff));
+            else                temp = tex1Dfetch(tex_jte_jc4, (iii&0x1ffffff));
         }
-        int index = tex1D(tex_jte_cmt, i >> 2);
-        float vv = tex1D(tex_jte_pex, (index << 1) + part);
+        int index = tex1Dfetch(tex_jte_cmt, i >> 2);
+        float vv = tex1Dfetch(tex_jte_pex, (index << 1) + part);
         rx += temp.x * vv;        ry += temp.y * vv;
         rz += temp.z * vv;        rw += temp.w * vv;
     }
@@ -1504,19 +1418,19 @@ template<int KH, bool JT> __global__ void jte_cam_vec32_kernel(int num, float* j
     int part2 = threadIdx.x & 0xf;
     //read data range for this camera
     //8 thread will do the same thing
-    int idx1 = tex1D(tex_jte_cmp, cam) << 4;        //first camera
-    int idx2 = tex1D(tex_jte_cmp, cam + 1) << 4;    //last camera + 1
+    int idx1 = tex1Dfetch(tex_jte_cmp, cam) << 4;        //first camera
+    int idx2 = tex1Dfetch(tex_jte_cmp, cam + 1) << 4;    //last camera + 1
 
     //loop to read the index of the projection.
     //so to get the location to read the jacobian
     for(int i = idx1 + threadIdx.x; i < idx2; i+=32)
     {
-        int index = tex1D(tex_jte_cmt, i >> 4);
+        int index = tex1Dfetch(tex_jte_cmt, i >> 4);
         float temp;
         if(JT)    temp = jc[i];
         else    temp = jc[(index << 4) + part2];
 
-        float v = tex1D(tex_jte_pex, (index << 1) + xypart);
+        float v = tex1Dfetch(tex_jte_pex, (index << 1) + xypart);
         sum += temp * v;
     }
     value[index] = sum;
@@ -1536,21 +1450,21 @@ __global__ void jte_point_kernel(int num,  float4* jte)
     int index = blockIdx.x * blockDim.x + threadIdx.x;
     if (index >= num) return;
 
-    int idx1 = tex1D(tex_jte_pmp, index);        //first camera
-    int idx2 = tex1D(tex_jte_pmp, index + 1);    //last camera + 1
+    int idx1 = tex1Dfetch(tex_jte_pmp, index);        //first camera
+    int idx2 = tex1Dfetch(tex_jte_pmp, index + 1);    //last camera + 1
     float4 result = make_float4(0, 0, 0, 0);
     for(int i = idx1; i < idx2; ++i)
     {
         //error vector
-        float2 ev = tex1D(tex_jte_pe, i);
+        float2 ev = tex1Dfetch(tex_jte_pe, i);
 
-        float4 j1 = tex1D(tex_jte_jp, i << 1);
+        float4 j1 = tex1Dfetch(tex_jte_jp, i << 1);
         result.x += j1.x * ev.x;
         result.y += j1.y * ev.x;
         result.z += j1.z * ev.x;
 
 
-        float4 j2 = tex1D(tex_jte_jp, 1 + (i << 1));
+        float4 j2 = tex1Dfetch(tex_jte_jp, 1 + (i << 1));
         result.x += j2.x * ev.y;
         result.y += j2.y * ev.y;
         result.z += j2.z * ev.y;
@@ -1569,11 +1483,11 @@ template<int KH, int TEXN> __global__ void jte_point_vec_kernel(int num, int row
     int index = blockIdx.x * KH + threadIdx.y + blockIdx.y * rowsz;
     if (index >= num) return;
 #ifdef JTE_POINT_VEC2
-    int idx1 = tex1D(tex_jte_pmp, index);        //first
-    int idx2 = tex1D(tex_jte_pmp, index + 1);    //last  + 1
+    int idx1 = tex1Dfetch(tex_jte_pmp, index);        //first
+    int idx2 = tex1Dfetch(tex_jte_pmp, index + 1);    //last  + 1
 #else
-    int idx1 = tex1D(tex_jte_pmp, index) << 1;        //first
-    int idx2 = tex1D(tex_jte_pmp, index + 1) << 1;    //last  + 1
+    int idx1 = tex1Dfetch(tex_jte_pmp, index) << 1;        //first
+    int idx2 = tex1Dfetch(tex_jte_pmp, index + 1) << 1;    //last  + 1
 #endif
     float rx = 0, ry = 0, rz = 0;
     for(int i = idx1 + threadIdx.x; i < idx2; i += 32)
@@ -1582,15 +1496,15 @@ template<int KH, int TEXN> __global__ void jte_point_vec_kernel(int num, int row
         {
 #ifdef JTE_POINT_VEC2
 
-            float2 vv = tex1D(tex_jte_pe, i);
-            float4 jp1 = tex1D(tex_jte_jp, ((i & 0x1ffffff) << 1));
-            float4 jp2 = tex1D(tex_jte_jp, ((i & 0x1ffffff) << 1) + 1);
+            float2 vv = tex1Dfetch(tex_jte_pe, i);
+            float4 jp1 = tex1Dfetch(tex_jte_jp, ((i & 0x1ffffff) << 1));
+            float4 jp2 = tex1Dfetch(tex_jte_jp, ((i & 0x1ffffff) << 1) + 1);
             rx += (jp1.x * vv.x + jp2.x * vv.y);
             ry += (jp1.y * vv.x + jp2.y * vv.y);
             rz += (jp1.z * vv.x + jp2.z * vv.y);
 #else
-            float vv = tex1D(tex_jte_pex, i);
-            float4 jpi = tex1D(tex_jte_jp2, i & 0x1ffffff);
+            float vv = tex1Dfetch(tex_jte_pex, i);
+            float4 jpi = tex1Dfetch(tex_jte_jp2, i & 0x1ffffff);
             rx += jpi.x * vv;
             ry += jpi.y * vv;
             rz += jpi.z * vv;
@@ -1598,15 +1512,15 @@ template<int KH, int TEXN> __global__ void jte_point_vec_kernel(int num, int row
         }else
         {
 #ifdef JTE_POINT_VEC2
-            float2 vv = tex1D(tex_jte_pe, i);
-            float4 jp1 = tex1D(tex_jte_jp, (i<< 1));
-            float4 jp2 = tex1D(tex_jte_jp, (i << 1) + 1);
+            float2 vv = tex1Dfetch(tex_jte_pe, i);
+            float4 jp1 = tex1Dfetch(tex_jte_jp, (i<< 1));
+            float4 jp2 = tex1Dfetch(tex_jte_jp, (i << 1) + 1);
             rx += (jp1.x * vv.x + jp2.x * vv.y);
             ry += (jp1.y * vv.x + jp2.y * vv.y);
             rz += (jp1.z * vv.x + jp2.z * vv.y);
 #else
-            float vv = tex1D(tex_jte_pex, i);
-            float4 jpi = tex1D(tex_jte_jp, i);
+            float vv = tex1Dfetch(tex_jte_pex, i);
+            float4 jpi = tex1Dfetch(tex_jte_jp, i);
             rx += jpi.x * vv;
             ry += jpi.y * vv;
             rz += jpi.z * vv;
@@ -1647,6 +1561,10 @@ void ProgramCU::ComputeJtE( CuTexImage& pe, CuTexImage& jc, CuTexImage& cmap, Cu
     else if(jc_transpose)jte_cam_vec32_kernel<bheight, true><<<grid1, block1>>>(ncam, jc.data(), jte.data());
     else            jte_cam_vec32_kernel<bheight, false><<<grid1, block1>>>(ncam, jc.data(), jte.data());
 
+    cudaUnbindTexture(tex_jte_cmp);
+    cudaUnbindTexture(tex_jte_cmt);
+    cudaUnbindTexture(tex_jte_pex);
+
 #elif defined( JTE_CAMERA_VEC)
     pe.BindTexture(tex_jte_pex);
     const unsigned int  bheight = 2;
@@ -1666,11 +1584,15 @@ void ProgramCU::ComputeJtE( CuTexImage& pe, CuTexImage& jc, CuTexImage& cmap, Cu
     {
         jc.BindTexture2(tex_jte_jc, tex_jte_jc2);
         jte_cam_vec_kernel<bheight, 2><<<grid1, block1>>>(ncam, jte.data());
+        cudaUnbindTexture(tex_jte_jc);
+        cudaUnbindTexture(tex_jte_jc2);
     }else
     {
         jc.BindTexture(tex_jte_jc);
         jte_cam_vec_kernel<bheight, 1><<<grid1, block1>>>(ncam, jte.data());
+        cudaUnbindTexture(tex_jte_jc);
     }
+    cudaUnbindTexture(tex_jte_pex);
 #else
     pe.BindTexture(tex_jte_pex);
     unsigned int  len1  =  ncam * 16;
@@ -1678,8 +1600,9 @@ void ProgramCU::ComputeJtE( CuTexImage& pe, CuTexImage& jc, CuTexImage& cmap, Cu
     unsigned int  nblock1= (len1 + bsize1 - 1) / bsize1;
     dim3 grid1(nblock1), block1(bsize1);
     jte_cam_kernel<<<grid1, block1>>>(len1, jc.data(), jte.data());
+    cudaUnbindTexture(tex_jte_pex);
 #endif
-    CheckErrorCUDA("ComputeJtE<Camera>");
+    cudaError("ComputeJtE<Camera>");
 
     ////////////////////////////////////////////
     pmap.BindTexture(tex_jte_pmp);
@@ -1692,33 +1615,43 @@ void ProgramCU::ComputeJtE( CuTexImage& pe, CuTexImage& jc, CuTexImage& cmap, Cu
     pe.BindTexture(tex_jte_pe);
     jp.BindTexture(tex_jte_jp);
     jte_point_kernel<<<grid2, block2>>>(len2, ((float4*) jte.data()) + 2 * ncam);
+    cudaUnbindTexture(tex_jte_pe);
+    cudaUnbindTexture(tex_jte_jp);
 #else
-
-#ifdef JTE_POINT_VEC2
-    pe.BindTexture(tex_jte_pe);
-#else
-    pe.BindTexture(tex_jte_pex);
+    #ifdef JTE_POINT_VEC2
+        pe.BindTexture(tex_jte_pe);
+    #else
+        pe.BindTexture(tex_jte_pex);
+    #endif
+        const unsigned int  bheight2 = 2;
+        unsigned int  bsize2 = 32;
+        unsigned int  nblock2 = (unsigned int ) ((npoint + bheight2 - 1) / bheight2);
+        unsigned int  offsetv = 8 * ncam;
+        unsigned int bw, bh;    GetBlockConfiguration(nblock2, bw, bh);
+        dim3 grid2(bw, bh), block2(bsize2, bheight2);
+        if(mode == 1)
+        {
+            //skip point
+        }else if(jp.GetDataSize() > MAX_TEXSIZE)
+        {
+            jp.BindTexture2(tex_jte_jp, tex_jte_jp2);
+            jte_point_vec_kernel<bheight2, 2><<<grid2, block2>>>(npoint, bw * bheight2, ((float*) jte.data()) + offsetv);
+            cudaUnbindTexture(tex_jte_jp);
+            cudaUnbindTexture(tex_jte_jp2);
+        }else
+        {
+            jp.BindTexture(tex_jte_jp);
+            jte_point_vec_kernel<bheight2, 1><<<grid2, block2>>>(npoint, bw * bheight2, ((float*) jte.data()) + offsetv);
+            cudaUnbindTexture(tex_jte_jp);
+        }
+        #ifdef JTE_POINT_VEC2
+            cudaUnbindTexture(tex_jte_pe);
+        #else
+            cudaUnbindTexture(tex_jte_pex);
+        #endif
 #endif
-    const unsigned int  bheight2 = 2;
-    unsigned int  bsize2 = 32;
-    unsigned int  nblock2 = (unsigned int ) ((npoint + bheight2 - 1) / bheight2);
-    unsigned int  offsetv = 8 * ncam;
-    unsigned int bw, bh;    GetBlockConfiguration(nblock2, bw, bh);
-    dim3 grid2(bw, bh), block2(bsize2, bheight2);
-    if(mode == 1)
-    {
-        //skip point
-    }else if(jp.GetDataSize() > MAX_TEXSIZE)
-    {
-        jp.BindTexture2(tex_jte_jp, tex_jte_jp2);
-        jte_point_vec_kernel<bheight2, 2><<<grid2, block2>>>(npoint, bw * bheight2, ((float*) jte.data()) + offsetv);
-    }else
-    {
-        jp.BindTexture(tex_jte_jp);
-        jte_point_vec_kernel<bheight2, 1><<<grid2, block2>>>(npoint, bw * bheight2, ((float*) jte.data()) + offsetv);
-    }
-#endif
-    CheckErrorCUDA("ComputeJtE<Point>");
+    cudaUnbindTexture(tex_jte_pmp);
+    cudaError("ComputeJtE<Point>");
 }
 
 texture<int   ,  1, cudaReadModeElementType> tex_jtjd_cmp;
@@ -1740,8 +1673,8 @@ template<int VN, int KH, bool JT> __global__ void jtjd_cam_vec32_kernel(
     {
         //read data range for this camera
         //8 thread will do the same thing
-        int idx1 = tex1D(tex_jtjd_cmp, cam) << 4;        //first camera
-        int idx2 = tex1D(tex_jtjd_cmp, cam + 1) << 4;    //last camera + 1
+        int idx1 = tex1Dfetch(tex_jtjd_cmp, cam) << 4;        //first camera
+        int idx2 = tex1Dfetch(tex_jtjd_cmp, cam + 1) << 4;    //last camera + 1
 
         //loop to read the index of the projection.
         //so to get the location to read the jacobian
@@ -1753,7 +1686,7 @@ template<int VN, int KH, bool JT> __global__ void jtjd_cam_vec32_kernel(
                 sum += temp * temp;
             }else
             {
-                int ii = tex1D(tex_jtjd_cmlist, i >> 4) << 4;
+                int ii = tex1Dfetch(tex_jtjd_cmlist, i >> 4) << 4;
                 float temp = jc[ii + part2];
                 sum += temp * temp;
             }
@@ -1791,30 +1724,30 @@ template<int TEXN> __global__ void jtjd_point_kernel(int num, int rowsz, float4*
     int index = blockIdx.x * blockDim.x + threadIdx.x + blockIdx.y * rowsz;
     if (index >= num) return;
 
-    int idx1 = tex1D(tex_jtjd_pmp, index);        //first camera
-    int idx2 = tex1D(tex_jtjd_pmp, index + 1);    //last camera + 1
+    int idx1 = tex1Dfetch(tex_jtjd_pmp, index);        //first camera
+    int idx2 = tex1Dfetch(tex_jtjd_pmp, index + 1);    //last camera + 1
     float rx = 0, ry = 0, rz = 0;
     for(int i = idx1; i < idx2; ++i)
     {
         if(TEXN == 2 && i > 0xffffff)
         {
-            float4 j1 = tex1D(tex_jtjd_jp2, (i & 0xffffff) << 1);
+            float4 j1 = tex1Dfetch(tex_jtjd_jp2, (i & 0xffffff) << 1);
             rx += j1.x * j1.x;
             ry += j1.y * j1.y;
             rz += j1.z * j1.z;
 
-            float4 j2 = tex1D(tex_jtjd_jp2, 1 + ((i & 0xffffff )<< 1));
+            float4 j2 = tex1Dfetch(tex_jtjd_jp2, 1 + ((i & 0xffffff )<< 1));
             rx += j2.x * j2.x;
             ry += j2.y * j2.y;
             rz += j2.z * j2.z;
         }else
         {
-            float4 j1 = tex1D(tex_jtjd_jp, i << 1);
+            float4 j1 = tex1Dfetch(tex_jtjd_jp, i << 1);
             rx += j1.x * j1.x;
             ry += j1.y * j1.y;
             rz += j1.z * j1.z;
 
-            float4 j2 = tex1D(tex_jtjd_jp, 1 + (i << 1));
+            float4 j2 = tex1Dfetch(tex_jtjd_jp, 1 + (i << 1));
             rx += j2.x * j2.x;
             ry += j2.y * j2.y;
             rz += j2.z * j2.z;
@@ -1846,8 +1779,10 @@ void ProgramCU::ComputeDiagonal(CuTexImage& jc, CuTexImage& cmap, CuTexImage& jp
         cmlist.BindTexture(tex_jtjd_cmlist);
         if(radial) jtjd_cam_vec32_kernel<8, bheight, false><<<grid1x, block1x>>>(ncam, add_existing_diagc, jc.data(), jtjd.data(), jtjdi.data());
         else       jtjd_cam_vec32_kernel<7, bheight, false><<<grid1x, block1x>>>(ncam, add_existing_diagc, jc.data(), jtjd.data(), jtjdi.data());
+        cudaUnbindTexture(tex_jtjd_cmlist);
     }
-    CheckErrorCUDA("ComputeDiagonal<Camera>");
+    cudaUnbindTexture(tex_jtjd_cmp);
+    cudaError("ComputeDiagonal<Camera>");
 
     ////////////////////////////////////////////
     unsigned int  npoint = (pmap.GetImgWidth() - 1);
@@ -1864,13 +1799,16 @@ void ProgramCU::ComputeDiagonal(CuTexImage& jc, CuTexImage& cmap, CuTexImage& jp
         jp.BindTexture2(tex_jtjd_jp, tex_jtjd_jp2);
         jtjd_point_kernel<2><<<grid2, block2>>>(len2, (bw * bsize2),
                         ((float4*) jtjd.data()) + 2 * ncam, ((float4*) jtjdi.data()) + 2 * ncam);
+        cudaUnbindTexture(tex_jtjd_jp);
+        cudaUnbindTexture(tex_jtjd_jp2);
     }else
     {
         jp.BindTexture(tex_jtjd_jp);
         jtjd_point_kernel<1><<<grid2, block2>>>(len2, (bw * bsize2),
                         ((float4*) jtjd.data()) + 2 * ncam, ((float4*) jtjdi.data()) + 2 * ncam);
     }
-    CheckErrorCUDA("ComputeDiagonal<Point>");
+    cudaUnbindTexture(tex_jtjd_pmp);
+    cudaError("ComputeDiagonal<Point>");
 }
 
 //for each
@@ -1884,7 +1822,7 @@ __global__ void jtjd_cam_q_kernel(int num, int rowsz, float* qw, float4* diag)
     float w = qw[index], ws = w * w * 2.0f;
     if(SJ)
     {
-        float4 sj = tex1D(tex_jacobian_sj, index);
+        float4 sj = tex1Dfetch(tex_jacobian_sj, index);
         float4 dj = tid == 0 ? make_float4(sj.x  * sj.x * ws, 0, 0, 0) : make_float4(0, 0, 0, sj.w * sj.w * ws);
         diag[index] = dj;
     }else
@@ -1907,11 +1845,12 @@ void ProgramCU::ComputeDiagonalQ(CuTexImage& qlistw, CuTexImage&sj, CuTexImage& 
     {
         sj.BindTexture(tex_jacobian_sj);
         jtjd_cam_q_kernel<true> <<<grid, block>>>(len, (bw * bsize), qlistw.data(), (float4*) diag.data());
+        cudaUnbindTexture(tex_jacobian_sj);
     }else
     {
         jtjd_cam_q_kernel<false> <<<grid, block>>>(len, (bw * bsize), qlistw.data(), (float4*) diag.data());
     }
-    CheckErrorCUDA("ComputeDiagonalQ");
+    cudaError("ComputeDiagonalQ");
 }
 
 template<int VN, int KH, bool JT> __global__ void jtjd_cam_block_vec32_kernel( int num,
@@ -1930,8 +1869,8 @@ template<int VN, int KH, bool JT> __global__ void jtjd_cam_block_vec32_kernel( i
         int rowpos = index - part;
         //read data range for this camera
         //8 thread will do the same thing
-        int idx1 = tex1D(tex_jtjd_cmp, cam) << 4;        //first camera
-        int idx2 = tex1D(tex_jtjd_cmp, cam + 1) << 4;    //last camera + 1
+        int idx1 = tex1Dfetch(tex_jtjd_cmp, cam) << 4;        //first camera
+        int idx2 = tex1Dfetch(tex_jtjd_cmp, cam + 1) << 4;    //last camera + 1
 
         //loop to read the index of the projection.
         //so to get the location to read the jacobian
@@ -1944,7 +1883,7 @@ template<int VN, int KH, bool JT> __global__ void jtjd_cam_block_vec32_kernel( i
                 for(int j = 0; j < VN; ++j)    row[j] += (temp * value[rowpos + j]);
             }else
             {
-                int ii = tex1D(tex_jtjd_cmlist, i >> 4) << 4;
+                int ii = tex1Dfetch(tex_jtjd_cmlist, i >> 4) << 4;
                 float temp = jc[ii + part2];
                 value[index] = temp;
                 for(int j = 0; j < VN; ++j)    row[j] += (temp * value[rowpos + j]);
@@ -2008,15 +1947,15 @@ template<int TEXN> __global__ void jtjd_point_block_kernel(int num, int rowsz,
     int index = blockIdx.x * blockDim.x + threadIdx.x + blockIdx.y * rowsz;
     if (index >= num) return;
 
-    int idx1 = tex1D(tex_jtjd_pmp, index);        //first camera
-    int idx2 = tex1D(tex_jtjd_pmp, index + 1);    //last camera + 1
+    int idx1 = tex1Dfetch(tex_jtjd_pmp, index);        //first camera
+    int idx2 = tex1Dfetch(tex_jtjd_pmp, index + 1);    //last camera + 1
 
     float M00 = 0, M01= 0, M02 = 0, M11 = 0, M12 = 0, M22 = 0;
     for(int i = idx1; i < idx2; ++i)
     {
         if(TEXN == 2 && i > 0xffffff)
         {
-            float4 j1 = tex1D(tex_jtjd_jp2, (i & 0xffffff) << 1);
+            float4 j1 = tex1Dfetch(tex_jtjd_jp2, (i & 0xffffff) << 1);
             M00 += j1.x * j1.x;
             M01 += j1.x * j1.y;
             M02 += j1.x * j1.z;
@@ -2024,7 +1963,7 @@ template<int TEXN> __global__ void jtjd_point_block_kernel(int num, int rowsz,
             M12 += j1.y * j1.z;
             M22 += j1.z * j1.z;
 
-            float4 j2 = tex1D(tex_jtjd_jp2, 1 + ((i & 0xffffff )<< 1));
+            float4 j2 = tex1Dfetch(tex_jtjd_jp2, 1 + ((i & 0xffffff )<< 1));
             M00 += j2.x * j2.x;
             M01 += j2.x * j2.y;
             M02 += j2.x * j2.z;
@@ -2033,7 +1972,7 @@ template<int TEXN> __global__ void jtjd_point_block_kernel(int num, int rowsz,
             M22 += j2.z * j2.z;
         }else
         {
-            float4 j1 = tex1D(tex_jtjd_jp, i << 1);
+            float4 j1 = tex1Dfetch(tex_jtjd_jp, i << 1);
             M00 += j1.x * j1.x;
             M01 += j1.x * j1.y;
             M02 += j1.x * j1.z;
@@ -2041,7 +1980,7 @@ template<int TEXN> __global__ void jtjd_point_block_kernel(int num, int rowsz,
             M12 += j1.y * j1.z;
             M22 += j1.z * j1.z;
 
-            float4 j2 = tex1D(tex_jtjd_jp, 1 + (i << 1));
+            float4 j2 = tex1Dfetch(tex_jtjd_jp, 1 + (i << 1));
             M00 += j2.x * j2.x;
             M01 += j2.x * j2.y;
             M02 += j2.x * j2.z;
@@ -2187,6 +2126,7 @@ void ProgramCU::ComputeDiagonalBlock(float lambda, bool dampd, CuTexImage& jc, C
             cmlist.BindTexture(tex_jtjd_cmlist);
             jtjd_cam_block_vec32_kernel<8, bheight, false><<<grid1x, block1x>>>(
                      ncam, lambda1, lambda2, jc.data(), diag.data(), blocks.data(), add_existing_diagc);
+            cudaUnbindTexture(tex_jtjd_cmlist);
         }
     }else
     {
@@ -2199,9 +2139,11 @@ void ProgramCU::ComputeDiagonalBlock(float lambda, bool dampd, CuTexImage& jc, C
             cmlist.BindTexture(tex_jtjd_cmlist);
             jtjd_cam_block_vec32_kernel<7, bheight, false><<<grid1x, block1x>>>(
                      ncam, lambda1, lambda2, jc.data(), diag.data(), blocks.data(), add_existing_diagc);
+            cudaUnbindTexture(tex_jtjd_cmlist);
         }
     }
-    CheckErrorCUDA("ComputeDiagonalBlock<Camera>");
+    cudaUnbindTexture(tex_jtjd_cmp);
+    cudaError("ComputeDiagonalBlock<Camera>");
 
     ////////////////////////////////////////////
     unsigned int  npoint = (pmap.GetImgWidth() - 1);
@@ -2222,13 +2164,17 @@ void ProgramCU::ComputeDiagonalBlock(float lambda, bool dampd, CuTexImage& jc, C
         jp.BindTexture2(tex_jtjd_jp, tex_jtjd_jp2);
         jtjd_point_block_kernel<2><<<grid2, block2>>>(len2, (bw * bsize2), lambda1, lambda2,
                         ((float4*) diag.data()) + offsetd, ((float4*) blocks.data()) + offsetb );
+        cudaUnbindTexture(tex_jtjd_jp);
+        cudaUnbindTexture(tex_jtjd_jp2);
     }else
     {
         jp.BindTexture(tex_jtjd_jp);
         jtjd_point_block_kernel<1><<<grid2, block2>>>(len2, (bw * bsize2), lambda1, lambda2,
                         ((float4*) diag.data()) + offsetd, ((float4*) blocks.data()) + offsetb);
+        cudaUnbindTexture(tex_jtjd_jp);
     }
-    CheckErrorCUDA("ComputeDiagonalBlock<Point>");
+    cudaUnbindTexture(tex_jtjd_pmp);
+    cudaError("ComputeDiagonalBlock<Point>");
 
     if(mode != 2)
     {
@@ -2238,7 +2184,7 @@ void ProgramCU::ComputeDiagonalBlock(float lambda, bool dampd, CuTexImage& jc, C
         dim3 grid3(nblock3), block3(bsize3);
         if(radial_distortion)jtjd_cam_block_invert_kernel<8><<<grid3, block3>>>(len3, (float4*) blocks.data());
         else                 jtjd_cam_block_invert_kernel<7><<<grid3, block3>>>(len3, (float4*) blocks.data());
-        CheckErrorCUDA("ComputeDiagonalBlockInverse<Camera>");
+        cudaError("ComputeDiagonalBlockInverse<Camera>");
     }
 }
 
@@ -2281,7 +2227,7 @@ void ProgramCU::MultiplyBlockConditioner(int ncam, int npoint, CuTexImage& block
                     (len1, (bw * bsize1), blocks.data(), vector.data(), result.data());
         else        multiply_block_conditioner_kernel<bsize1, 3, 7> <<<grid1, block1>>>
                     (len1, (bw * bsize1), blocks.data(), vector.data(), result.data());
-        CheckErrorCUDA("MultiplyBlockConditioner<Camera>");
+        cudaError("MultiplyBlockConditioner<Camera>");
     }
 
     if(mode != 1)
@@ -2296,7 +2242,7 @@ void ProgramCU::MultiplyBlockConditioner(int ncam, int npoint, CuTexImage& block
         dim3 grid2(bw, bh), block2(bsize2);
         multiply_block_conditioner_kernel<bsize2, 2, 3> <<<grid2, block2>>>(len2, (bw * bsize2),
             blocks.data() + offsetb, vector.data() +  offsetd, result.data() + offsetd);
-        CheckErrorCUDA("MultiplyBlockConditioner<Point>");
+        cudaError("MultiplyBlockConditioner<Point>");
     }
 }
 
@@ -2308,16 +2254,16 @@ template<int TEXN> __global__ void shuffle_camera_jacobian_kernel(int num, int b
 {
     int index = threadIdx.x + blockIdx.x  * blockDim.x +  blockIdx.y * bwidth;
     if(index >= num) return;
-    int fetch_idx = tex1D(tex_shuffle_map, index >> 2);
+    int fetch_idx = tex1Dfetch(tex_shuffle_map, index >> 2);
     if(TEXN == 2)
     {
         int texidx = fetch_idx >> 23, fidx = ((fetch_idx & 0x7fffff)<< 2)  + (index & 0x3);
-        if(texidx == 0)         jc[index] = tex1D(tex_shuffle_jc,  fidx);
-        else if(texidx == 1) jc[index] = tex1D(tex_shuffle_jc2, fidx);
+        if(texidx == 0)         jc[index] = tex1Dfetch(tex_shuffle_jc,  fidx);
+        else if(texidx == 1) jc[index] = tex1Dfetch(tex_shuffle_jc2, fidx);
     }
     if(TEXN == 1)
     {
-        jc[index] = tex1D(tex_shuffle_jc, (fetch_idx << 2)  + (index & 0x3));
+        jc[index] = tex1Dfetch(tex_shuffle_jc, (fetch_idx << 2)  + (index & 0x3));
     }
 }
 
@@ -2342,6 +2288,8 @@ bool ProgramCU::ShuffleCameraJacobian(CuTexImage& jc, CuTexImage& map, CuTexImag
         dim3 grid(bw, bh), block(bsize);
         jc.BindTexture2(tex_shuffle_jc, tex_shuffle_jc2);
         shuffle_camera_jacobian_kernel<2><<<grid, block>>>(len, (bw * bsize), (float4*) result.data());
+        cudaUnbindTexture(tex_shuffle_jc);
+        cudaUnbindTexture(tex_shuffle_jc2);
     }else
     {
         jc.BindTexture(tex_shuffle_jc );
@@ -2349,8 +2297,10 @@ bool ProgramCU::ShuffleCameraJacobian(CuTexImage& jc, CuTexImage& map, CuTexImag
         GetBlockConfiguration(nblock, bw, bh);
         dim3 grid(bw, bh), block(bsize);
         shuffle_camera_jacobian_kernel<1><<<grid, block>>>(len, (bw * bsize), (float4*) result.data());
+        cudaUnbindTexture(tex_shuffle_jc);
     }
-    CheckErrorCUDA("ShuffleCameraJacobian");
+    cudaUnbindTexture(tex_shuffle_map);
+    cudaError("ShuffleCameraJacobian");
     return true;
 }
 
@@ -2372,16 +2322,16 @@ template<int TEXN> __global__ void multiply_jx_kernel(int num, int bwidth, int o
     if(TEXN == 4 && (index >> 24) == 3)
     {
         ////////////////////////////////////////////
-        int2  proj = tex1D(tex_mjx_idx, index >> 1);
-        float4 xc1 = tex1D(tex_mjx_x, proj.x );
-        float4 xc2 = tex1D(tex_mjx_x, proj.x + 1);
-        float4 xp  = tex1D(tex_mjx_x, proj.y + offset);
+        int2  proj = tex1Dfetch(tex_mjx_idx, index >> 1);
+        float4 xc1 = tex1Dfetch(tex_mjx_x, proj.x );
+        float4 xc2 = tex1Dfetch(tex_mjx_x, proj.x + 1);
+        float4 xp  = tex1Dfetch(tex_mjx_x, proj.y + offset);
 
         ////////////////////////////////////////////
         float4 jp, jc1, jc2;
-        jp =  tex1D(tex_mjx_jp2, index & 0x1ffffff);
-        jc1 = tex1D(tex_mjx_jc4, (index & 0xffffff) << 1);
-        jc2 = tex1D(tex_mjx_jc4, ((index & 0xffffff) << 1) + 1);
+        jp =  tex1Dfetch(tex_mjx_jp2, index & 0x1ffffff);
+        jc1 = tex1Dfetch(tex_mjx_jc4, (index & 0xffffff) << 1);
+        jc2 = tex1Dfetch(tex_mjx_jc4, ((index & 0xffffff) << 1) + 1);
 
         /////////////////////////////////////
         result[index] =
@@ -2391,16 +2341,16 @@ template<int TEXN> __global__ void multiply_jx_kernel(int num, int bwidth, int o
     }else if(TEXN > 2 && (index >> 24) == 2)
     {
         ////////////////////////////////////////////
-        int2  proj = tex1D(tex_mjx_idx, index >> 1);
-        float4 xc1 = tex1D(tex_mjx_x, proj.x );
-        float4 xc2 = tex1D(tex_mjx_x, proj.x + 1);
-        float4 xp  = tex1D(tex_mjx_x, proj.y + offset);
+        int2  proj = tex1Dfetch(tex_mjx_idx, index >> 1);
+        float4 xc1 = tex1Dfetch(tex_mjx_x, proj.x );
+        float4 xc2 = tex1Dfetch(tex_mjx_x, proj.x + 1);
+        float4 xp  = tex1Dfetch(tex_mjx_x, proj.y + offset);
 
         ////////////////////////////////////////////
         float4 jp, jc1, jc2;
-        jp =  tex1D(tex_mjx_jp2, index & 0x1ffffff);
-        jc1 = tex1D(tex_mjx_jc3, (index & 0xffffff) << 1);
-        jc2 = tex1D(tex_mjx_jc3, ((index & 0xffffff) << 1) + 1);
+        jp =  tex1Dfetch(tex_mjx_jp2, index & 0x1ffffff);
+        jc1 = tex1Dfetch(tex_mjx_jc3, (index & 0xffffff) << 1);
+        jc2 = tex1Dfetch(tex_mjx_jc3, ((index & 0xffffff) << 1) + 1);
 
         /////////////////////////////////////
         result[index] =
@@ -2410,16 +2360,16 @@ template<int TEXN> __global__ void multiply_jx_kernel(int num, int bwidth, int o
     }else if(TEXN > 1 && (index > 0xffffff))
     {
         ////////////////////////////////////////////
-        int2  proj = tex1D(tex_mjx_idx, index >> 1);
-        float4 xc1 = tex1D(tex_mjx_x, proj.x );
-        float4 xc2 = tex1D(tex_mjx_x, proj.x + 1);
-        float4 xp  = tex1D(tex_mjx_x, proj.y + offset);
+        int2  proj = tex1Dfetch(tex_mjx_idx, index >> 1);
+        float4 xc1 = tex1Dfetch(tex_mjx_x, proj.x );
+        float4 xc2 = tex1Dfetch(tex_mjx_x, proj.x + 1);
+        float4 xp  = tex1Dfetch(tex_mjx_x, proj.y + offset);
 
         ////////////////////////////////////////////
         float4 jp, jc1, jc2;
-        jp =  tex1D(tex_mjx_jp, index & 0x1ffffff);
-        jc1 = tex1D(tex_mjx_jc2, (index & 0xffffff) << 1);
-        jc2 = tex1D(tex_mjx_jc2, ((index & 0xffffff) << 1) + 1);
+        jp =  tex1Dfetch(tex_mjx_jp, index & 0x1ffffff);
+        jc1 = tex1Dfetch(tex_mjx_jc2, (index & 0xffffff) << 1);
+        jc2 = tex1Dfetch(tex_mjx_jc2, ((index & 0xffffff) << 1) + 1);
 
         /////////////////////////////////////
         result[index] =
@@ -2429,16 +2379,16 @@ template<int TEXN> __global__ void multiply_jx_kernel(int num, int bwidth, int o
     }else
     {
         ////////////////////////////////////////////
-        int2  proj = tex1D(tex_mjx_idx, index >> 1);
-        float4 xc1 = tex1D(tex_mjx_x, proj.x );
-        float4 xc2 = tex1D(tex_mjx_x, proj.x + 1);
-        float4 xp  = tex1D(tex_mjx_x, proj.y + offset);
+        int2  proj = tex1Dfetch(tex_mjx_idx, index >> 1);
+        float4 xc1 = tex1Dfetch(tex_mjx_x, proj.x );
+        float4 xc2 = tex1Dfetch(tex_mjx_x, proj.x + 1);
+        float4 xp  = tex1Dfetch(tex_mjx_x, proj.y + offset);
 
         ////////////////////////////////////////////
         float4 jp, jc1, jc2;
-        jp =  tex1D(tex_mjx_jp, index);
-        jc1 = tex1D(tex_mjx_jc, index << 1);
-        jc2 = tex1D(tex_mjx_jc, (index << 1) + 1);
+        jp =  tex1Dfetch(tex_mjx_jp, index);
+        jc1 = tex1Dfetch(tex_mjx_jc, index << 1);
+        jc2 = tex1Dfetch(tex_mjx_jc, (index << 1) + 1);
 
         /////////////////////////////////////
         result[index] =
@@ -2457,14 +2407,14 @@ template<int TEXN> __global__ void multiply_jcx_kernel(int num, int bwidth, floa
     if(TEXN == 4 && (index >> 24) == 3)
     {
         ////////////////////////////////////////////
-        int2  proj = tex1D(tex_mjx_idx, index >> 1);
-        float4 xc1 = tex1D(tex_mjx_x, proj.x );
-        float4 xc2 = tex1D(tex_mjx_x, proj.x + 1);
+        int2  proj = tex1Dfetch(tex_mjx_idx, index >> 1);
+        float4 xc1 = tex1Dfetch(tex_mjx_x, proj.x );
+        float4 xc2 = tex1Dfetch(tex_mjx_x, proj.x + 1);
 
         ////////////////////////////////////////////
         float4 jc1, jc2;
-        jc1 = tex1D(tex_mjx_jc4, (index & 0xffffff) << 1);
-        jc2 = tex1D(tex_mjx_jc4, ((index & 0xffffff) << 1) + 1);
+        jc1 = tex1Dfetch(tex_mjx_jc4, (index & 0xffffff) << 1);
+        jc2 = tex1Dfetch(tex_mjx_jc4, ((index & 0xffffff) << 1) + 1);
 
         /////////////////////////////////////
         result[index] =
@@ -2473,14 +2423,14 @@ template<int TEXN> __global__ void multiply_jcx_kernel(int num, int bwidth, floa
     }else if(TEXN > 2 && (index >> 24) == 2)
     {
         ////////////////////////////////////////////
-        int2  proj = tex1D(tex_mjx_idx, index >> 1);
-        float4 xc1 = tex1D(tex_mjx_x, proj.x );
-        float4 xc2 = tex1D(tex_mjx_x, proj.x + 1);
+        int2  proj = tex1Dfetch(tex_mjx_idx, index >> 1);
+        float4 xc1 = tex1Dfetch(tex_mjx_x, proj.x );
+        float4 xc2 = tex1Dfetch(tex_mjx_x, proj.x + 1);
 
         ////////////////////////////////////////////
         float4 jc1, jc2;
-        jc1 = tex1D(tex_mjx_jc3, (index & 0xffffff) << 1);
-        jc2 = tex1D(tex_mjx_jc3, ((index & 0xffffff) << 1) + 1);
+        jc1 = tex1Dfetch(tex_mjx_jc3, (index & 0xffffff) << 1);
+        jc2 = tex1Dfetch(tex_mjx_jc3, ((index & 0xffffff) << 1) + 1);
 
         /////////////////////////////////////
         result[index] =
@@ -2489,14 +2439,14 @@ template<int TEXN> __global__ void multiply_jcx_kernel(int num, int bwidth, floa
     }else if(TEXN > 1 && (index > 0xffffff))
     {
         ////////////////////////////////////////////
-        int2  proj = tex1D(tex_mjx_idx, index >> 1);
-        float4 xc1 = tex1D(tex_mjx_x, proj.x );
-        float4 xc2 = tex1D(tex_mjx_x, proj.x + 1);
+        int2  proj = tex1Dfetch(tex_mjx_idx, index >> 1);
+        float4 xc1 = tex1Dfetch(tex_mjx_x, proj.x );
+        float4 xc2 = tex1Dfetch(tex_mjx_x, proj.x + 1);
 
         ////////////////////////////////////////////
         float4 jc1, jc2;
-        jc1 = tex1D(tex_mjx_jc2, (index & 0xffffff) << 1);
-        jc2 = tex1D(tex_mjx_jc2, ((index & 0xffffff) << 1) + 1);
+        jc1 = tex1Dfetch(tex_mjx_jc2, (index & 0xffffff) << 1);
+        jc2 = tex1Dfetch(tex_mjx_jc2, ((index & 0xffffff) << 1) + 1);
 
         /////////////////////////////////////
         result[index] =
@@ -2505,14 +2455,14 @@ template<int TEXN> __global__ void multiply_jcx_kernel(int num, int bwidth, floa
     }else
     {
         ////////////////////////////////////////////
-        int2  proj = tex1D(tex_mjx_idx, index >> 1);
-        float4 xc1 = tex1D(tex_mjx_x, proj.x );
-        float4 xc2 = tex1D(tex_mjx_x, proj.x + 1);
+        int2  proj = tex1Dfetch(tex_mjx_idx, index >> 1);
+        float4 xc1 = tex1Dfetch(tex_mjx_x, proj.x );
+        float4 xc2 = tex1Dfetch(tex_mjx_x, proj.x + 1);
 
         ////////////////////////////////////////////
         float4 jc1, jc2;
-        jc1 = tex1D(tex_mjx_jc, index << 1);
-        jc2 = tex1D(tex_mjx_jc, (index << 1) + 1);
+        jc1 = tex1Dfetch(tex_mjx_jc, index << 1);
+        jc2 = tex1Dfetch(tex_mjx_jc, (index << 1) + 1);
 
         /////////////////////////////////////
         result[index] =
@@ -2531,20 +2481,20 @@ template<int TEXN> __global__ void multiply_jpx_kernel(int num, int bwidth, int 
     if(TEXN ==2 && index > 0x1ffffff)
     {
         ////////////////////////////////////////////
-        int2  proj = tex1D(tex_mjx_idx, index >> 1);
-        float4 xp  = tex1D(tex_mjx_x, proj.y + offset);
+        int2  proj = tex1Dfetch(tex_mjx_idx, index >> 1);
+        float4 xp  = tex1Dfetch(tex_mjx_x, proj.y + offset);
         ////////////////////////////////////////////
-        float4 jp =  tex1D(tex_mjx_jp2, index & 0x1ffffff);
+        float4 jp =  tex1Dfetch(tex_mjx_jp2, index & 0x1ffffff);
         /////////////////////////////////////
         result[index] = jp.x  * xp.x  + jp.y  * xp.y  + jp.z  * xp.z;
     }else
     {
         ////////////////////////////////////////////
-        int2  proj = tex1D(tex_mjx_idx, index >> 1);
-        float4 xp  = tex1D(tex_mjx_x, proj.y + offset);
+        int2  proj = tex1Dfetch(tex_mjx_idx, index >> 1);
+        float4 xp  = tex1Dfetch(tex_mjx_x, proj.y + offset);
 
         ////////////////////////////////////////////
-        float4 jp =  tex1D(tex_mjx_jp, index);
+        float4 jp =  tex1Dfetch(tex_mjx_jp, index);
         /////////////////////////////////////
         result[index] =  jp.x  * xp.x  + jp.y  * xp.y  + jp.z  * xp.z;
     }
@@ -2557,10 +2507,10 @@ template<int KW> __global__ void multiply_jx_notex2_kernel(int num, int bwidth,
     int index = threadIdx.x + bindex;
 
     ////////////////////////////////////////////
-    int2  proj = tex1D(tex_mjx_idx, index >> 1);
-    float4 xc1 = tex1D(tex_mjx_x, proj.x );
-    float4 xc2 = tex1D(tex_mjx_x, proj.x + 1);
-    float4 xp  = tex1D(tex_mjx_x,  proj.y + offset);
+    int2  proj = tex1Dfetch(tex_mjx_idx, index >> 1);
+    float4 xc1 = tex1Dfetch(tex_mjx_x, proj.x );
+    float4 xc2 = tex1Dfetch(tex_mjx_x, proj.x + 1);
+    float4 xp  = tex1Dfetch(tex_mjx_x,  proj.y + offset);
     ////////////////////////////////////////////
     __shared__ float jps[KW * 4];
     __shared__ float jcs[KW * 8];
@@ -2587,8 +2537,8 @@ template<int KW> __global__ void multiply_jpx_notex2_kernel(int num, int bwidth,
     int index = threadIdx.x + bindex;
 
     ////////////////////////////////////////////
-    int2  proj = tex1D(tex_mjx_idx, index >> 1);
-    float4 xp  = tex1D(tex_mjx_x,  proj.y + offset);
+    int2  proj = tex1Dfetch(tex_mjx_idx, index >> 1);
+    float4 xp  = tex1Dfetch(tex_mjx_x,  proj.y + offset);
     ////////////////////////////////////////////
     __shared__ float jps[KW * 4];
 
@@ -2609,9 +2559,9 @@ template<int KW> __global__ void multiply_jcx_notex2_kernel(int num, int bwidth,
     int index = threadIdx.x + bindex;
 
     ////////////////////////////////////////////
-    int2  proj = tex1D(tex_mjx_idx, index >> 1);
-    float4 xc1 = tex1D(tex_mjx_x, proj.x );
-    float4 xc2 = tex1D(tex_mjx_x, proj.x + 1);
+    int2  proj = tex1Dfetch(tex_mjx_idx, index >> 1);
+    float4 xc1 = tex1Dfetch(tex_mjx_x, proj.x );
+    float4 xc2 = tex1Dfetch(tex_mjx_x, proj.x + 1);
     ////////////////////////////////////////////
 
     __shared__ float jcs[KW * 8];
@@ -2660,6 +2610,12 @@ void ProgramCU::ComputeJX(int point_offset, CuTexImage& x, CuTexImage& jc, CuTex
             GetBlockConfiguration(nblock, bw, bh);
             dim3 grid(bw, bh), block(bsize);
             multiply_jx_kernel<4><<<grid, block>>>(len, (bw * bsize), point_offset, result.data());
+            cudaUnbindTexture(tex_mjx_jp);
+            cudaUnbindTexture(tex_mjx_jp2);
+            cudaUnbindTexture(tex_mjx_jc);
+            cudaUnbindTexture(tex_mjx_jc2);
+            cudaUnbindTexture(tex_mjx_jc3);
+            cudaUnbindTexture(tex_mjx_jc4);
         }else    if(szjc > MAX_TEXSIZE)
         {
             jp.BindTexture(tex_mjx_jp);
@@ -2667,6 +2623,9 @@ void ProgramCU::ComputeJX(int point_offset, CuTexImage& x, CuTexImage& jc, CuTex
             GetBlockConfiguration(nblock, bw, bh);
             dim3 grid(bw, bh), block(bsize);
             multiply_jx_kernel<2><<<grid, block>>>(len, (bw * bsize), point_offset, result.data());
+            cudaUnbindTexture(tex_mjx_jp);
+            cudaUnbindTexture(tex_mjx_jc);
+            cudaUnbindTexture(tex_mjx_jc2);
         }else
         {
             jp.BindTexture(tex_mjx_jp);
@@ -2674,8 +2633,10 @@ void ProgramCU::ComputeJX(int point_offset, CuTexImage& x, CuTexImage& jc, CuTex
             GetBlockConfiguration(nblock, bw, bh);
             dim3 grid(bh, bw), block(bsize);
             multiply_jx_kernel<1><<<grid, block>>>(len, (bh * bsize), point_offset,  result.data());
+            cudaUnbindTexture(tex_mjx_jp);
+            cudaUnbindTexture(tex_mjx_jc);
         }
-        CheckErrorCUDA("ComputeJX");
+        cudaError("ComputeJX");
     }else if(mode == 1)
     {
         size_t szjc = jc.GetDataSize();
@@ -2690,20 +2651,27 @@ void ProgramCU::ComputeJX(int point_offset, CuTexImage& x, CuTexImage& jc, CuTex
             GetBlockConfiguration(nblock, bw, bh);
             dim3 grid(bw, bh), block(bsize);
             multiply_jcx_kernel<4><<<grid, block>>>(len, (bw * bsize), result.data());
+            cudaUnbindTexture(tex_mjx_jc);
+            cudaUnbindTexture(tex_mjx_jc2);
+            cudaUnbindTexture(tex_mjx_jc3);
+            cudaUnbindTexture(tex_mjx_jc4);
         }else    if(szjc > MAX_TEXSIZE)
         {
             jc.BindTexture2(tex_mjx_jc, tex_mjx_jc2);
             GetBlockConfiguration(nblock, bw, bh);
             dim3 grid(bw, bh), block(bsize);
             multiply_jcx_kernel<2><<<grid, block>>>(len, (bw * bsize), result.data());
+            cudaUnbindTexture(tex_mjx_jc);
+            cudaUnbindTexture(tex_mjx_jc2);
         }else
         {
             jc.BindTexture(tex_mjx_jc);
             GetBlockConfiguration(nblock, bw, bh);
             dim3 grid(bh, bw), block(bsize);
             multiply_jcx_kernel<1><<<grid, block>>>(len, (bh * bsize),  result.data());
+            cudaUnbindTexture(tex_mjx_jc);
         }
-        CheckErrorCUDA("ComputeJCX");
+        cudaError("ComputeJCX");
     }else if(mode == 2)
     {
         size_t szjp = jp.GetDataSize();
@@ -2713,16 +2681,20 @@ void ProgramCU::ComputeJX(int point_offset, CuTexImage& x, CuTexImage& jc, CuTex
             GetBlockConfiguration(nblock, bw, bh);
             dim3 grid(bw, bh), block(bsize);
             multiply_jpx_kernel<2><<<grid, block>>>(len, (bw * bsize), point_offset, result.data());
+            cudaUnbindTexture(tex_mjx_jp);
         }else
         {
             jp.BindTexture(tex_mjx_jp);
             GetBlockConfiguration(nblock, bw, bh);
             dim3 grid(bh, bw), block(bsize);
             multiply_jpx_kernel<1><<<grid, block>>>(len, (bh * bsize), point_offset,  result.data());
+            cudaUnbindTexture(tex_mjx_jp);
         }
-        CheckErrorCUDA("ComputeJPX");
+        cudaError("ComputeJPX");
 
     }
+    cudaUnbindTexture(tex_mjx_idx);
+    cudaUnbindTexture(tex_mjx_x);
 }
 
 
@@ -2732,15 +2704,15 @@ template<bool md, bool pd> __device__ void jacobian_internal(
                         float jic, float* jxc, float* jyc, float* jxp, float* jyp)
 {
     float m[3];
-    float4 ft = tex1D(tex_jacobian_cam, camera_pos);
-    float4 r1 = tex1D(tex_jacobian_cam, camera_pos + 1);
+    float4 ft = tex1Dfetch(tex_jacobian_cam, camera_pos);
+    float4 r1 = tex1Dfetch(tex_jacobian_cam, camera_pos + 1);
     r[0] = r1.x;   r[1] = r1.y; r[2] = r1.z;    r[3] = r1.w;
-    float4 r2 = tex1D(tex_jacobian_cam, camera_pos + 2);
+    float4 r2 = tex1Dfetch(tex_jacobian_cam, camera_pos + 2);
     r[4] = r2.x;   r[5] = r2.y; r[6] = r2.z;    r[7] = r2.w;
-    float4 r3 = tex1D(tex_jacobian_cam, camera_pos + 3);
+    float4 r3 = tex1Dfetch(tex_jacobian_cam, camera_pos + 3);
     r[8] = r3.x;
 
-    float4 temp = tex1D(tex_jacobian_pts, pt_pos);
+    float4 temp = tex1Dfetch(tex_jacobian_pts, pt_pos);
     m[0] = temp.x; m[1] = temp.y; m[2] = temp.z;
 
     float x0 = r[0] * m[0] + r[1] * m[1] + r[2] * m[2];
@@ -2808,7 +2780,7 @@ template<bool md, bool pd> __device__ void jacobian_internal(
 
         if(md)
         {
-            float2 ms = tex1D(tex_jacobian_meas, tidx);
+            float2 ms = tex1Dfetch(tex_jacobian_meas, tidx);
             float  msn = (ms.x * ms.x + ms.y * ms.y) * jic;
             jxc[7] = -ms.x * msn;
             jyc[7] = -ms.y * msn;
@@ -2834,15 +2806,15 @@ template<bool md, bool pd> __device__ void jacobian_camera_internal(
         int camera_pos, int pt_pos, int tidx, float * r, float jic, float* jxc, float* jyc)
 {
     float m[3];
-    float4 ft = tex1D(tex_jacobian_cam, camera_pos);
-    float4 r1 = tex1D(tex_jacobian_cam, camera_pos + 1);
+    float4 ft = tex1Dfetch(tex_jacobian_cam, camera_pos);
+    float4 r1 = tex1Dfetch(tex_jacobian_cam, camera_pos + 1);
     r[0] = r1.x;   r[1] = r1.y; r[2] = r1.z;    r[3] = r1.w;
-    float4 r2 = tex1D(tex_jacobian_cam, camera_pos + 2);
+    float4 r2 = tex1Dfetch(tex_jacobian_cam, camera_pos + 2);
     r[4] = r2.x;   r[5] = r2.y; r[6] = r2.z;    r[7] = r2.w;
-    float4 r3 = tex1D(tex_jacobian_cam, camera_pos + 3);
+    float4 r3 = tex1Dfetch(tex_jacobian_cam, camera_pos + 3);
     r[8] = r3.x;
 
-    float4 temp = tex1D(tex_jacobian_pts, pt_pos);
+    float4 temp = tex1Dfetch(tex_jacobian_pts, pt_pos);
     m[0] = temp.x; m[1] = temp.y; m[2] = temp.z;
 
     float x0 = r[0] * m[0] + r[1] * m[1] + r[2] * m[2];
@@ -2906,7 +2878,7 @@ template<bool md, bool pd> __device__ void jacobian_camera_internal(
 
         if(md)
         {
-            float2 ms = tex1D(tex_jacobian_meas, tidx);
+            float2 ms = tex1Dfetch(tex_jacobian_meas, tidx);
             float  msn = (ms.x * ms.x + ms.y * ms.y) * jic;
             jxc[7] = -ms.x * msn;
             jyc[7] = -ms.y * msn;
@@ -2922,15 +2894,15 @@ template<bool md, bool pd> __device__ void jacobian_camera_internal(
 template<bool pd> __device__ void jacobian_point_internal(int camera_pos, int pt_pos, int tidx, float * r, float* jxp, float* jyp)
 {
     float m[3];
-    float4 ft = tex1D(tex_jacobian_cam, camera_pos);
-    float4 r1 = tex1D(tex_jacobian_cam, camera_pos + 1);
+    float4 ft = tex1Dfetch(tex_jacobian_cam, camera_pos);
+    float4 r1 = tex1Dfetch(tex_jacobian_cam, camera_pos + 1);
     r[0] = r1.x;   r[1] = r1.y; r[2] = r1.z;    r[3] = r1.w;
-    float4 r2 = tex1D(tex_jacobian_cam, camera_pos + 2);
+    float4 r2 = tex1Dfetch(tex_jacobian_cam, camera_pos + 2);
     r[4] = r2.x;   r[5] = r2.y; r[6] = r2.z;    r[7] = r2.w;
-    float4 r3  = tex1D(tex_jacobian_cam, camera_pos + 3);
+    float4 r3  = tex1Dfetch(tex_jacobian_cam, camera_pos + 3);
     r[8] = r3.x;
 
-    float4 temp = tex1D(tex_jacobian_pts, pt_pos);
+    float4 temp = tex1Dfetch(tex_jacobian_pts, pt_pos);
     m[0] = temp.x; m[1] = temp.y; m[2] = temp.z;
 
     float x0 = r[0] * m[0] + r[1] * m[1] + r[2] * m[2];
@@ -2973,10 +2945,10 @@ template<bool md, bool pd> __global__ void multiply_jx_noj_kernel(int num, int b
 
     __shared__ float data[9 * 64];
     ////////////////////////////////////////////
-    int2  proj = tex1D(tex_mjx_idx, index);
-    float4 xc1 = tex1D(tex_mjx_x, proj.x );
-    float4 xc2 = tex1D(tex_mjx_x, proj.x + 1);
-    float4 xp  = tex1D(tex_mjx_x, proj.y + offset);
+    int2  proj = tex1Dfetch(tex_mjx_idx, index);
+    float4 xc1 = tex1Dfetch(tex_mjx_x, proj.x );
+    float4 xc2 = tex1Dfetch(tex_mjx_x, proj.x + 1);
+    float4 xp  = tex1Dfetch(tex_mjx_x, proj.y + offset);
 
     ////////////////////////////////////////////
     float jxc[8], jyc[8], jxp[3], jyp[3];
@@ -3000,9 +2972,9 @@ template<bool md, bool pd> __global__ void multiply_jcx_noj_kernel(int num, int 
 
     __shared__ float data[9 * 64];
     ////////////////////////////////////////////
-    int2  proj = tex1D(tex_mjx_idx, index);
-    float4 xc1 = tex1D(tex_mjx_x, proj.x );
-    float4 xc2 = tex1D(tex_mjx_x, proj.x + 1);
+    int2  proj = tex1Dfetch(tex_mjx_idx, index);
+    float4 xc1 = tex1Dfetch(tex_mjx_x, proj.x );
+    float4 xc2 = tex1Dfetch(tex_mjx_x, proj.x + 1);
 
     ////////////////////////////////////////////
     float jxc[8], jyc[8];
@@ -3025,8 +2997,8 @@ template<bool pd> __global__ void multiply_jpx_noj_kernel(int num, int bwidth, i
 
     __shared__ float data[9 * 64];
     ////////////////////////////////////////////
-    int2  proj = tex1D(tex_mjx_idx, index);
-    float4 xp  = tex1D(tex_mjx_x, proj.y + offset);
+    int2  proj = tex1Dfetch(tex_mjx_idx, index);
+    float4 xp  = tex1Dfetch(tex_mjx_x, proj.y + offset);
 
     ////////////////////////////////////////////
     float jxp[3], jyp[3];
@@ -3065,6 +3037,7 @@ void ProgramCU::ComputeJX_(CuTexImage& x,  CuTexImage& jx, CuTexImage& camera, C
         {
             meas.BindTexture(tex_jacobian_meas);
             multiply_jx_noj_kernel<true , false><<<grid, block>>>(len, (bw * bsize), point_offset,  jfc, (float2*) jx.data());
+            cudaUnbindTexture(tex_jacobian_meas);
         }else if(radial_distortion)
         {
             multiply_jx_noj_kernel<false, true><<<grid, block>>>(len, (bw * bsize), point_offset,  jfc, (float2*) jx.data());
@@ -3073,13 +3046,14 @@ void ProgramCU::ComputeJX_(CuTexImage& x,  CuTexImage& jx, CuTexImage& camera, C
             multiply_jx_noj_kernel<false, false><<<grid, block>>>(len, (bw * bsize), point_offset,  jfc, (float2*) jx.data());
         }
 
-        CheckErrorCUDA("ComputeJX_");
+        cudaError("ComputeJX_");
     }else if(mode == 1)
     {
       if(radial_distortion == -1)
         {
             meas.BindTexture(tex_jacobian_meas);
             multiply_jcx_noj_kernel<true , false><<<grid, block>>>(len, (bw * bsize),  jfc, (float2*) jx.data());
+            cudaUnbindTexture(tex_jacobian_meas);
         }else if(radial_distortion)
         {
             multiply_jcx_noj_kernel<false, true><<<grid, block>>>(len, (bw * bsize),  jfc, (float2*) jx.data());
@@ -3088,7 +3062,7 @@ void ProgramCU::ComputeJX_(CuTexImage& x,  CuTexImage& jx, CuTexImage& camera, C
             multiply_jcx_noj_kernel<false, false><<<grid, block>>>(len, (bw * bsize),  jfc, (float2*) jx.data());
         }
 
-        CheckErrorCUDA("ComputeJCX_");
+        cudaError("ComputeJCX_");
     }else if(mode == 2)
     {
         if(radial_distortion == 1)
@@ -3099,8 +3073,12 @@ void ProgramCU::ComputeJX_(CuTexImage& x,  CuTexImage& jx, CuTexImage& camera, C
             multiply_jpx_noj_kernel<false><<<grid, block>>>(len, (bw * bsize), point_offset,  (float2*) jx.data());
         }
 
-        CheckErrorCUDA("ComputeJX_");
+        cudaError("ComputeJX_");
     }
+    cudaUnbindTexture(tex_mjx_idx);
+    cudaUnbindTexture(tex_mjx_x);
+    cudaUnbindTexture(tex_jacobian_cam);
+    cudaUnbindTexture(tex_jacobian_pts);
 }
 
 
@@ -3114,8 +3092,8 @@ template<bool md, bool pd, int KH> __global__ void jte_cam_vec_noj_kernel(int nu
 
     //read data range for this camera
     //8 thread will do the same thing
-    int idx1 = tex1D(tex_jte_cmp, cam) ;        //first camera
-    int idx2 = tex1D(tex_jte_cmp, cam + 1);    //last camera + 1
+    int idx1 = tex1Dfetch(tex_jte_cmp, cam) ;        //first camera
+    int idx2 = tex1Dfetch(tex_jte_cmp, cam + 1);    //last camera + 1
 
     float* valuec = value + 32 * 9 * threadIdx.y;
     float* rp = valuec + threadIdx.x * 9;
@@ -3126,10 +3104,10 @@ template<bool md, bool pd, int KH> __global__ void jte_cam_vec_noj_kernel(int nu
     //so to get the location to read the jacobian
     for(int i = idx1 + threadIdx.x; i < idx2; i += 32)
     {
-        int index = tex1D(tex_jte_cmt, i);
-        int2 proj = tex1D(tex_jacobian_idx, index);
+        int index = tex1Dfetch(tex_jte_cmt, i);
+        int2 proj = tex1Dfetch(tex_jacobian_idx, index);
         jacobian_camera_internal<md, pd>(cam << 2, proj.y, index, rp, jic, jxc, jyc);
-        float2 vv = tex1D(tex_jte_pe, index);
+        float2 vv = tex1Dfetch(tex_jte_pe, index);
         //
         for(int j = 0; j < 8; ++j) rr[j] += (jxc[j] * vv.x + jyc[j] * vv.y);
     }
@@ -3155,15 +3133,15 @@ template<bool pd, int KH> __global__ void jte_point_vec_noj_kernel(int num, int 
     int index = blockIdx.x * KH + threadIdx.y + blockIdx.y * rowsz;
     if (index >= num) return;
 
-    int idx1 = tex1D(tex_jte_pmp, index);        //first
-    int idx2 = tex1D(tex_jte_pmp, index + 1);    //last + 1
+    int idx1 = tex1Dfetch(tex_jte_pmp, index);        //first
+    int idx2 = tex1Dfetch(tex_jte_pmp, index + 1);    //last + 1
     float rx = 0, ry = 0, rz = 0, jxp[3], jyp[3];
     int rowp = threadIdx.y * 9 * 32;
     float* rp = value + threadIdx.x * 9 + rowp;
     for(int i = idx1 + threadIdx.x; i < idx2; i += 32)
     {
-        float2 ev = tex1D(tex_jte_pe, i);
-        int2 proj = tex1D(tex_jacobian_idx, i);
+        float2 ev = tex1Dfetch(tex_jte_pe, i);
+        int2 proj = tex1Dfetch(tex_jacobian_idx, i);
         jacobian_point_internal<pd>(proj.x<<1, proj.y , i, rp, jxp, jyp);
         rx += (jxp[0] * ev.x + jyp[0] * ev.y);
         ry += (jxp[1] * ev.x + jyp[1] * ev.y);
@@ -3206,8 +3184,17 @@ void ProgramCU::ComputeJtE_(CuTexImage& e,  CuTexImage& jte, CuTexImage& camera,
     else if(radial_distortion == -1) jte_cam_vec_noj_kernel<true,  false, bheight1><<<grid, block>>>(ncam, bw * bheight1, jfc, jte.data());
     else if(radial_distortion)  jte_cam_vec_noj_kernel<false, true, bheight1><<<grid, block>>>(ncam, bw * bheight1, jfc, jte.data());
     else                        jte_cam_vec_noj_kernel<false, false, bheight1><<<grid, block>>>(ncam, bw * bheight1, jfc, jte.data());
-    CheckErrorCUDA("ComputeJtE_<Camera>");
+    cudaError("ComputeJtE_<Camera>");
 
+    cudaUnbindTexture(tex_jacobian_idx);
+    cudaUnbindTexture(tex_jacobian_cam);
+    cudaUnbindTexture(tex_jacobian_pts);
+    if(radial_distortion){    
+        cudaUnbindTexture(tex_jacobian_meas); 
+    }
+    cudaUnbindTexture(tex_jte_cmp);
+    cudaUnbindTexture(tex_jte_cmt);
+    cudaUnbindTexture(tex_jte_pe);
 
 
     int npt = point.GetImgWidth();
@@ -3228,6 +3215,10 @@ void ProgramCU::ComputeJtE_(CuTexImage& e,  CuTexImage& jte, CuTexImage& camera,
             jte_point_vec_kernel<bheight2, 2><<<grid2, block2>>>(npt, bw * bheight2, jte.data() + offsetv);
         else
             jte_point_vec_kernel<bheight2, 1><<<grid2, block2>>>(npt, bw * bheight2, jte.data() + offsetv);
+        cudaUnbindTexture(tex_jte_pmp);
+        cudaUnbindTexture(tex_jte_pex);
+        cudaUnbindTexture(tex_jte_jp);
+        cudaUnbindTexture(tex_jte_jp2);
     }else
     {
         pmap.BindTexture(tex_jte_pmp);
@@ -3235,8 +3226,9 @@ void ProgramCU::ComputeJtE_(CuTexImage& e,  CuTexImage& jte, CuTexImage& camera,
             jte_point_vec_noj_kernel<true, bheight2><<<grid2, block2>>>(npt, bw * bheight2, jte.data() + offsetv);
         else
             jte_point_vec_noj_kernel<false, bheight2><<<grid2, block2>>>(npt, bw * bheight2, jte.data() + offsetv);
+        cudaUnbindTexture(tex_jte_pmp);
     }
-    CheckErrorCUDA("ComputeJtE_<Point>");
+    cudaError("ComputeJtE_<Point>");
 
 }
 
@@ -3265,8 +3257,8 @@ template<int KH, bool md, bool pd, bool scaling> __global__ void jtjd_cam_block_
     float row4[VN - 4], row5[VN - 5], row6[VN - 6], row7[1] = {0};
     //read data range for this camera
     //8 thread will do the same thing
-    int idx1 = tex1D(tex_jtjd_cmp, cam);        //first camera
-    int idx2 = tex1D(tex_jtjd_cmp, cam + 1);    //last camera + 1
+    int idx1 = tex1Dfetch(tex_jtjd_cmp, cam);        //first camera
+    int idx2 = tex1Dfetch(tex_jtjd_cmp, cam + 1);    //last camera + 1
 
 #define REPEAT7(FUNC) FUNC(0); FUNC(1); FUNC(2); FUNC(3); FUNC(4); FUNC(5); FUNC(6);
     #define SETZERO(k)  for(int j = 0; j < VN - k; ++j) row##k[j] = 0;
@@ -3276,8 +3268,8 @@ template<int KH, bool md, bool pd, bool scaling> __global__ void jtjd_cam_block_
     float4 sjv[2];
     if(scaling && (pd || md) )
     {
-        sjv[0] = tex1D(tex_jacobian_sj, (cam << 1));
-        sjv[1] = tex1D(tex_jacobian_sj, (cam << 1) + 1);
+        sjv[0] = tex1Dfetch(tex_jacobian_sj, (cam << 1));
+        sjv[1] = tex1Dfetch(tex_jacobian_sj, (cam << 1) + 1);
     }
 
     //loop to read the index of the projection.
@@ -3285,8 +3277,8 @@ template<int KH, bool md, bool pd, bool scaling> __global__ void jtjd_cam_block_
     for(int i = idx1 + threadIdx.x; i < idx2; i+=32)
     {
         /////////////////////////////////////////
-        int index = tex1D(tex_jtjd_cmlist, i);
-        int2 proj = tex1D(tex_jacobian_idx, index);
+        int index = tex1Dfetch(tex_jtjd_cmlist, i);
+        int2 proj = tex1Dfetch(tex_jacobian_idx, index);
 
         ///////////////////////////////////////////////
         jacobian_camera_internal<md, pd>(cam << 2, proj.y, index, rp, jic, jxc, jyc);
@@ -3343,8 +3335,8 @@ template<int KH, bool md, bool pd, bool scaling> __global__ void jtjd_cam_block_
     if(scaling && !pd && !md)
     {
         float4 sjv[2]; float* sj = (float*) sjv; //32 threads...64 values
-        sjv[0] = tex1D(tex_jacobian_sj, (cam << 1));
-        sjv[1] = tex1D(tex_jacobian_sj, (cam << 1) + 1);
+        sjv[0] = tex1Dfetch(tex_jacobian_sj, (cam << 1));
+        sjv[1] = tex1Dfetch(tex_jacobian_sj, (cam << 1) + 1);
         float sji = sj[threadIdx.x & 0x07];
         value[threadIdx.x     ] *= (sji * sj[    threadIdx.x / 8]);
         value[threadIdx.x + 32] *= (sji * sj[4 + threadIdx.x / 8]);
@@ -3377,19 +3369,19 @@ template<int KW, bool pd, bool scaling> __global__ void jtjd_point_block_noj_ker
     if (index >= num) return;
 
     __shared__ float value[KW * 9];
-    int idx1 = tex1D(tex_jtjd_pmp, index);        //first
-    int idx2 = tex1D(tex_jtjd_pmp, index + 1);    //last + 1
+    int idx1 = tex1Dfetch(tex_jtjd_pmp, index);        //first
+    int idx2 = tex1Dfetch(tex_jtjd_pmp, index + 1);    //last + 1
 
     float M00 = 0, M01= 0, M02 = 0, M11 = 0, M12 = 0, M22 = 0;
     float jxp[3], jyp[3];
     float* rp = value + threadIdx.x * 9;
 
     float4 sj;
-    if(scaling && pd)   sj = tex1D(tex_jacobian_sj, index + ptx);
+    if(scaling && pd)   sj = tex1Dfetch(tex_jacobian_sj, index + ptx);
 
     for(int i = idx1; i < idx2; ++i)
     {
-        int2 proj = tex1D(tex_jacobian_idx, i);
+        int2 proj = tex1Dfetch(tex_jacobian_idx, i);
         jacobian_point_internal<pd>(proj.x<<1, proj.y, i, rp, jxp, jyp);
 
         if(scaling && pd)
@@ -3407,7 +3399,7 @@ template<int KW, bool pd, bool scaling> __global__ void jtjd_point_block_noj_ker
 
     if(scaling && !pd)
     {
-        sj = tex1D(tex_jacobian_sj, index + ptx);
+        sj = tex1Dfetch(tex_jacobian_sj, index + ptx);
         M00 *= (sj.x * sj.x);
         M01 *= (sj.x * sj.y);
         M02 *= (sj.x * sj.z);
@@ -3487,6 +3479,7 @@ void ProgramCU::ComputeDiagonalBlock_(float lambda, bool dampd, CuTexImage& came
                                         (ncam, bw * bheight1, lambda1, lambda2, jfc, diag.data(), blocks.data(), add_existing_diagc);
         else                          jtjd_cam_block_noj_kernel<bheight1, false, false, true><<<grid1, block1>>>
                                         (ncam, bw * bheight1, lambda1, lambda2, jfc, diag.data(), blocks.data(), add_existing_diagc);
+        cudaUnbindTexture(tex_jacobian_sj);
     }else
     {
         if(radial_distortion == -1)   jtjd_cam_block_noj_kernel<bheight1, true, false, false ><<<grid1, block1>>>
@@ -3496,7 +3489,13 @@ void ProgramCU::ComputeDiagonalBlock_(float lambda, bool dampd, CuTexImage& came
         else                          jtjd_cam_block_noj_kernel<bheight1, false, false, false><<<grid1, block1>>>
                                         (ncam, bw * bheight1, lambda1, lambda2, jfc, diag.data(), blocks.data(), add_existing_diagc);
     }
-    CheckErrorCUDA("ComputeDiagonalBlock_<Camera>");
+    cudaUnbindTexture(tex_jacobian_idx);
+    cudaUnbindTexture(tex_jacobian_cam);
+    cudaUnbindTexture(tex_jacobian_pts);
+    cudaUnbindTexture(tex_jtjd_cmp);
+    cudaUnbindTexture(tex_jtjd_cmlist);
+    if(radial_distortion == -1)   cudaUnbindTexture(tex_jacobian_meas);
+    cudaError("ComputeDiagonalBlock_<Camera>");
 
     ////////////////////////////////////////////////////
     const unsigned int  bsize2 = 64;
@@ -3521,6 +3520,8 @@ void ProgramCU::ComputeDiagonalBlock_(float lambda, bool dampd, CuTexImage& came
         else
             jtjd_point_block_kernel<1><<<grid2, block2>>>(len2, (bw * bsize2), lambda1, lambda2,
                             ((float4*) diag.data()) + offsetd, ((float4*) blocks.data()) + offsetb);
+        cudaUnbindTexture(tex_jtjd_jp);
+        cudaUnbindTexture(tex_jtjd_jp2);
     }else
     {
         if(sj.IsValid())
@@ -3532,6 +3533,7 @@ void ProgramCU::ComputeDiagonalBlock_(float lambda, bool dampd, CuTexImage& came
             else
                 jtjd_point_block_noj_kernel<bsize2, false, true><<<grid2, block2>>>(len2, (bw * bsize2), lambda1, lambda2,
                                 ((float4*) diag.data()) + offsetd, ((float4*) blocks.data()) + offsetb, offsetd);
+            cudaUnbindTexture(tex_jacobian_sj);
         }else
         {
             if(radial_distortion && radial_distortion != -1)
@@ -3542,7 +3544,8 @@ void ProgramCU::ComputeDiagonalBlock_(float lambda, bool dampd, CuTexImage& came
                                 ((float4*) diag.data()) + offsetd, ((float4*) blocks.data()) + offsetb, 0);
         }
     }
-    CheckErrorCUDA("ComputeDiagonalBlock_<Point>");
+    cudaUnbindTexture(tex_jtjd_pmp);
+    cudaError("ComputeDiagonalBlock_<Point>");
 
 
     ////////////////////////////////////////////////////
@@ -3554,7 +3557,7 @@ void ProgramCU::ComputeDiagonalBlock_(float lambda, bool dampd, CuTexImage& came
         dim3 grid3(nblock3), block3(bsize3);
         if(radial_distortion)jtjd_cam_block_invert_kernel<8><<<grid3, block3>>>(len3, (float4*) blocks.data());
         else                 jtjd_cam_block_invert_kernel<7><<<grid3, block3>>>(len3, (float4*) blocks.data());
-        CheckErrorCUDA("ComputeDiagonalBlockInverse<Camera>");
+        cudaError("ComputeDiagonalBlockInverse<Camera>");
     }
 }
 
@@ -3563,13 +3566,13 @@ __global__ void projection_q_kernel(int nproj, int rowsz, float2* pj)
     ////////////////////////////////
     int  tidx = threadIdx.x + blockIdx.x * blockDim.x + blockIdx.y * rowsz;
     if(tidx >= nproj) return;
-    int2   proj = tex1D(tex_projection_idx, tidx);
-    float2 wq   = tex1D(tex_projection_mea, tidx);
+    int2   proj = tex1Dfetch(tex_projection_idx, tidx);
+    float2 wq   = tex1Dfetch(tex_projection_mea, tidx);
     ///////////////////////////////////
-    float f1 = tex1D(tex_projection_cam, proj.x * 4).x;
-    float r1 = tex1D(tex_projection_cam, proj.x * 4 + 3).w;
-    float f2 = tex1D(tex_projection_cam, proj.y * 4).x;
-    float r2 = tex1D(tex_projection_cam, proj.y * 4 + 3).w;
+    float f1 = tex1Dfetch(tex_projection_cam, proj.x * 4).x;
+    float r1 = tex1Dfetch(tex_projection_cam, proj.x * 4 + 3).w;
+    float f2 = tex1Dfetch(tex_projection_cam, proj.y * 4).x;
+    float r2 = tex1Dfetch(tex_projection_cam, proj.y * 4 + 3).w;
     pj[tidx] = make_float2(- wq.x * (f1 - f2) , - wq.y * (r1 - r2));
 }
 
@@ -3592,6 +3595,9 @@ void ProgramCU:: ComputeProjectionQ(CuTexImage& camera, CuTexImage& qmap,  CuTex
 
     //////////////////////////////
     projection_q_kernel<<<grid, block>>>(len, bw * bsize, ((float2*) proj.data()) + offset );
+    cudaUnbindTexture(tex_projection_cam);
+    cudaUnbindTexture(tex_projection_idx);
+    cudaUnbindTexture(tex_projection_mea);
 }
 
 template <bool SJ> __global__ void multiply_jqx_kernel(int num, int bwidth, float2* result)
@@ -3599,20 +3605,20 @@ template <bool SJ> __global__ void multiply_jqx_kernel(int num, int bwidth, floa
     int index = threadIdx.x + blockIdx.x * blockDim.x +  blockIdx.y * bwidth;
     if(index >= num) return;
     ////////////////////////////////////////////
-    int2  proj = tex1D(tex_mjx_idx, index);
-    float2 wq  = tex1D(tex_jacobian_meas, index);
+    int2  proj = tex1Dfetch(tex_mjx_idx, index);
+    float2 wq  = tex1Dfetch(tex_jacobian_meas, index);
     int idx1 = proj.x * 2, idx2 = proj.y * 2;
-    float x11 = tex1D(tex_mjx_x, idx1).x;
-    float x17 = tex1D(tex_mjx_x, idx1 + 1).w;
-    float x21 = tex1D(tex_mjx_x, idx2 ).x;
-    float x27 = tex1D(tex_mjx_x, idx2 + 1).w;
+    float x11 = tex1Dfetch(tex_mjx_x, idx1).x;
+    float x17 = tex1Dfetch(tex_mjx_x, idx1 + 1).w;
+    float x21 = tex1Dfetch(tex_mjx_x, idx2 ).x;
+    float x27 = tex1Dfetch(tex_mjx_x, idx2 + 1).w;
 
     if(SJ)
     {
-        float s11 = tex1D(tex_jacobian_sj, idx1).x;
-        float s17 = tex1D(tex_jacobian_sj, idx1 + 1).w;
-        float s21 = tex1D(tex_jacobian_sj, idx2).x;
-        float s27 = tex1D(tex_jacobian_sj, idx2 + 1).w;
+        float s11 = tex1Dfetch(tex_jacobian_sj, idx1).x;
+        float s17 = tex1Dfetch(tex_jacobian_sj, idx1 + 1).w;
+        float s21 = tex1Dfetch(tex_jacobian_sj, idx2).x;
+        float s27 = tex1Dfetch(tex_jacobian_sj, idx2 + 1).w;
         result[index] = make_float2((x11*s11 - x21*s21) * wq.x, (x17*s17 - x27*s27) * wq.y);
     }else
     {
@@ -3641,10 +3647,14 @@ void ProgramCU::ComputeJQX(CuTexImage& x, CuTexImage& qmap,  CuTexImage& wq, CuT
     {
         sj.BindTexture(tex_jacobian_sj);
         multiply_jqx_kernel<true><<<grid, block>>>(len, (bw * bsize), ((float2*) jx.data()) + offset);
+        cudaUnbindTexture(tex_jacobian_sj);
     }else
     {
         multiply_jqx_kernel<false><<<grid, block>>>(len, (bw * bsize), ((float2*) jx.data()) + offset);
     }
+    cudaUnbindTexture(tex_mjx_idx);
+    cudaUnbindTexture(tex_mjx_x);
+    cudaUnbindTexture(tex_jacobian_meas);
 }
 
 texture<int2, 1, cudaReadModeElementType>   tex_jte_q_idx;
@@ -3655,17 +3665,17 @@ template<bool SJ> __global__ void jte_cam_q_kernel(int num, int bwidth, float* j
    // int cam = blockIdx.x * KH + threadIdx.y + blockIdx.y * rowsz ;
     int index = threadIdx.x + blockIdx.x * blockDim.x +  blockIdx.y * bwidth;
     if(index >= num) return;
-    int2 indexp = tex1D(tex_jte_q_idx, index);
+    int2 indexp = tex1Dfetch(tex_jte_q_idx, index);
     if(indexp.x == -1) return;
-    float2 wq   = tex1D(tex_jte_q_w, index);
-    float2 e1 = tex1D(tex_jte_pe, indexp.x);
-    float2 e2 = tex1D(tex_jte_pe, indexp.y);
+    float2 wq   = tex1Dfetch(tex_jte_q_w, index);
+    float2 e1 = tex1Dfetch(tex_jte_pe, indexp.x);
+    float2 e2 = tex1Dfetch(tex_jte_pe, indexp.y);
     int index8 = index << 3;
     if(SJ)
     {
-        float s1 = tex1D(tex_jacobian_sj, index * 2).x;
+        float s1 = tex1Dfetch(tex_jacobian_sj, index * 2).x;
         jte[index8        ] += s1 * wq.x * (e1.x - e2.x);
-         float s7 = tex1D(tex_jacobian_sj, index * 2 + 1).w;
+         float s7 = tex1Dfetch(tex_jacobian_sj, index * 2 + 1).w;
         jte[index8 + 7    ] += s7 * wq.y * (e1.y - e2.y);
     }else
     {
@@ -3691,10 +3701,14 @@ void ProgramCU::ComputeJQtEC(CuTexImage& pe, CuTexImage& qlist, CuTexImage& wq, 
     {
         sj.BindTexture(tex_jacobian_sj);
         jte_cam_q_kernel<true><<<grid, block>>>(ncam, (bw * bsize), jte.data());
+        cudaUnbindTexture(tex_jacobian_sj);
     }else
     {
         jte_cam_q_kernel<false><<<grid, block>>>(ncam, (bw * bsize), jte.data());
     }
+    cudaUnbindTexture(tex_jte_pe);
+    cudaUnbindTexture(tex_jte_q_idx);
+    cudaUnbindTexture(tex_jte_q_w);
 }
 
 

@@ -18,7 +18,6 @@
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-
 #include <iostream>
 #include <algorithm>
 #include <stdlib.h>
@@ -32,11 +31,9 @@ using namespace std;
 
 #include "ProgramCU.h"
 
-
 #if CUDA_VERSION <= 2010
 #error "Require CUDA 2.2 or higher"
 #endif
-
 
 CuTexImage::CuTexImage()
 {
@@ -46,32 +43,31 @@ CuTexImage::CuTexImage()
     _imgWidth = _imgHeight = 0;
 }
 
-
-
 CuTexImage::~CuTexImage()
 {
-    if(_cuData && _owner) cudaFree(_cuData);
+    if (_cuData && _owner)
+        cudaFree(_cuData);
 }
 
 void CuTexImage::ReleaseData()
 {
-    if(_cuData && _owner) cudaFree(_cuData);
+    if (_cuData && _owner)
+        cudaFree(_cuData);
     _cuData = NULL;
     _numBytes = 0;
 }
 
-
-void CuTexImage::SwapData(CuTexImage& src)
+void CuTexImage::SwapData(CuTexImage &src)
 {
-    if(_cuData == src._cuData)
+    if (_cuData == src._cuData)
         return;
 
-    void * cuData = _cuData;
+    void *cuData = _cuData;
     unsigned int numChannel = _numChannel;
     unsigned int imgWidth = _imgWidth;
     unsigned int imgHeight = _imgHeight;
-    bool         owner = _owner;
-    size_t numBytes=  _numBytes;
+    bool owner = _owner;
+    size_t numBytes = _numBytes;
 
     _cuData = src._cuData;
     _numChannel = src._numChannel;
@@ -88,68 +84,71 @@ void CuTexImage::SwapData(CuTexImage& src)
     src._owner = owner;
 }
 
-
 bool CuTexImage::InitTexture(unsigned int width, unsigned int height, unsigned int nchannel)
 {
-    size_t size = sizeof(float)* width * height * nchannel;
+    size_t size = sizeof(float) * width * height * nchannel;
     _imgWidth = width;
     _imgHeight = height;
     _numChannel = nchannel;
 
-    if(size <= _numBytes) return true;
+    if (size <= _numBytes)
+        return true;
 
-    if(_cuData && _owner) cudaFree(_cuData);
+    if (_cuData && _owner)
+        cudaFree(_cuData);
 
     //allocate the array data
     cudaError_t e = cudaMalloc(&_cuData, size);
-    _numBytes = e == cudaSuccess ?  size : 0;
+    _numBytes = e == cudaSuccess ? size : 0;
     _owner = true;
     return e == cudaSuccess;
 }
 
-void CuTexImage::SetTexture(void* data, unsigned int width, unsigned int nchannel)
+void CuTexImage::SetTexture(void *data, unsigned int width, unsigned int nchannel)
 {
-    if(_cuData && _owner) cudaFree(_cuData);
+    if (_cuData && _owner)
+        cudaFree(_cuData);
     _imgWidth = width;
     _imgHeight = 1;
     _numChannel = nchannel;
-    _numBytes = sizeof(float)* width * _imgHeight * _numChannel ;
+    _numBytes = sizeof(float) * width * _imgHeight * _numChannel;
     _cuData = data;
     _owner = false;
 }
 
-void CuTexImage::CopyFromHost(const void * buf)
+void CuTexImage::CopyFromHost(const void *buf)
 {
-    if(_cuData == NULL || buf == NULL || GetDataSize() == 0) return;
-    cudaMemcpy( _cuData, buf, _imgWidth * _imgHeight * _numChannel * sizeof(float), cudaMemcpyHostToDevice);
+    if (_cuData == NULL || buf == NULL || GetDataSize() == 0)
+        return;
+    cudaMemcpy(_cuData, buf, _imgWidth * _imgHeight * _numChannel * sizeof(float), cudaMemcpyHostToDevice);
 }
 
-
-void CuTexImage::CopyFromDevice(const void * buf)
+void CuTexImage::CopyFromDevice(const void *buf)
 {
-    if(_cuData == NULL) return;
-    cudaMemcpy((char*)_cuData, buf, _imgWidth * _imgHeight * _numChannel * sizeof(float), cudaMemcpyDeviceToDevice);
+    if (_cuData == NULL)
+        return;
+    cudaMemcpy((char *)_cuData, buf, _imgWidth * _imgHeight * _numChannel * sizeof(float), cudaMemcpyDeviceToDevice);
 }
 
-void CuTexImage::CopyToHost(void * buf)
+void CuTexImage::CopyToHost(void *buf)
 {
-    std::cout << "_cuData: " << _cuData << std::endl;
-    if(_cuData == NULL) return;
+    // std::cout << "_cuData: " << _cuData << std::endl;
+    if (_cuData == NULL)
+        return;
     size_t sz = _imgWidth * _imgHeight * _numChannel * sizeof(float);
-    std::cout << "sz: " << sz << std::endl;
-    std::cout << "buf: " << &buf << std::endl;
+    // std::cout << "sz: " << sz << std::endl;
+    // std::cout << "buf: " << &buf << std::endl;
     //cudaThreadSynchronize();
     cudaMemcpy(buf, _cuData, sz, cudaMemcpyDeviceToHost);
     ProgramCU::CheckErrorCUDA("CopyToHost");
     cudaThreadSynchronize();
 }
 
-
-void CuTexImage::SaveToFile(const char* name)
+void CuTexImage::SaveToFile(const char *name)
 {
     ofstream out(name);
     vector<float> value(GetLength());
     CopyToHost(&value[0]);
-    for(size_t i = 0; i < value.size(); ++i) out << value[i] << '\n';
+    for (size_t i = 0; i < value.size(); ++i)
+        out << value[i] << '\n';
 }
-

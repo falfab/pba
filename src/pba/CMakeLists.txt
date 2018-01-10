@@ -19,6 +19,9 @@ IF(CUDA_FOUND)
   SET_TARGET_PROPERTIES(pba PROPERTIES
                             SOVERSION 1
                             VERSION 1.5.0)
+                            
+    # TODO panato
+  CUDA_ADD_EXECUTABLE(pba_driver ../driver/driver.cpp ${SRCS} ${PROGRAM_CU} ${CUDA_LIBRARY})
 ELSE()
 
   SET(SRCS pba.cpp
@@ -31,6 +34,9 @@ ELSE()
                             SOVERSION 1
                             VERSION 1.5.0)
   TARGET_LINK_LIBRARIES(pba ${CMAKE_THREAD_LIBS_INIT})
+  
+  # TODO panato
+  ADD_EXECUTABLE(pba_driver ../driver/driver.cpp ${SRCS})
 
 ENDIF()
 
